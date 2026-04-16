@@ -1,0 +1,62 @@
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.*
+!/.env.example
+secrets/
+*.pem
+*.key
+
+# Credentials
+service-account.json
+gcp-key.json
+credentials.json
+
+# Logs
+*.log
+logs/
+personal_plan/
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# Airflow
+airflow/logs/
+airflow/airflow.db
+
+# Build / temp
+build/
+dist/
+tmp/
+.cache/
+
+# Swap files
+*.swp
+*~
+
