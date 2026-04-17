@@ -1,4 +1,3 @@
-
 # Python
 __pycache__/
 *.py[cod]
@@ -14,9 +13,6 @@ __pycache__/
 venv/
 env/
 
-# Jupyter
-.ipynb_checkpoints/
-
 # Editors / OS
 .vscode/
 .idea/
@@ -26,12 +22,10 @@ Thumbs.db
 # Environment / secrets
 .env
 .env.*
-!/.env.example
+!.env.example
 secrets/
 *.pem
 *.key
-
-# Credentials
 service-account.json
 gcp-key.json
 credentials.json
@@ -39,12 +33,11 @@ credentials.json
 # Logs
 *.log
 logs/
-personal_plan/
 
 # dbt
-dbt/target/
-dbt/dbt_packages/
-dbt/logs/
+marketplace_analytics_dbt/target/
+marketplace_analytics_dbt/dbt_packages/
+marketplace_analytics_dbt/logs/
 
 # Airflow
 airflow/logs/
@@ -55,8 +48,18 @@ build/
 dist/
 tmp/
 .cache/
+AppData/
+
+# Data and local artifacts
+data/
+
+# Personal planning notes
+personal_plan/
+CLAUDE.md
+AGENTS.md
+*/CLAUDE.md
+*/AGENTS.md
 
 # Swap files
 *.swp
 *~
-
