@@ -1,0 +1,29 @@
+name: "marketplace_analytics_dbt"
+version: "1.0.0"
+config-version: 2
+
+profile: "marketplace_analytics_dbt"
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  marketplace_analytics_dbt:
+    staging:
+      +materialized: view
+      +schema: "{{ env_var('BQ_STAGING_DATASET', 'staging') }}"
+    intermediate:
+      +materialized: view
+      +schema: "{{ env_var('BQ_INTERMEDIATE_DATASET', 'intermediate') }}"
+    marts:
+      +materialized: table
+      +schema: "{{ env_var('BQ_MARTS_DATASET', 'marts') }}"
