@@ -1,0 +1,645 @@
+version: 2
+
+models:
+  - name: stg_orders
+    description: >
+      Standardized Olist order headers. Grain: one row per order_id.
+    columns:
+      - name: order_id
+        description: "Primary order identifier."
+        data_tests:
+          - not_null
+          - unique
+      - name: customer_id
+        description: "Customer identifier attached to the order."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: order_status
+        description: "Standardized order lifecycle status."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - created
+                  - approved
+                  - invoiced
+                  - processing
+                  - shipped
+                  - delivered
+                  - canceled
+                  - unavailable
+      - name: order_purchased_at_utc
+        description: "Timestamp when the order was purchased."
+        data_tests:
+          - not_null
+      - name: order_approved_at_utc
+        description: "Timestamp when the order payment was approved. Nullable before approval."
+      - name: order_delivered_to_carrier_at_utc
+        description: "Timestamp when the order was handed off to the carrier. Nullable before shipment."
+      - name: order_delivered_to_customer_at_utc
+        description: "Timestamp when the order was delivered to the customer. Nullable for undelivered orders."
+      - name: order_estimated_delivery_at_utc
+        description: "Estimated customer delivery timestamp from the source order. Nullable when the source order does not provide a delivery estimate."
+      - name: batch_id
+        description: "Ingestion batch identifier for lineage and rerun auditing."
+        data_tests:
+          - not_null
+      - name: ingested_at_utc
+        description: "UTC timestamp when the raw batch was ingested."
+        data_tests:
+          - not_null
+      - name: source_file_name
+        description: "Source file name loaded by the ingestion batch."
+        data_tests:
+          - not_null
+
+  - name: stg_order_items
+    description: >
+      Standardized Olist order items. Grain: one row per order_id and
+      order_item_id.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - order_id
+              - order_item_id
+    columns:
+      - name: order_id
+        description: "Order identifier for the item row."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
+      - name: order_item_id
+        description: "Item sequence number inside the order."
+        data_tests:
+          - not_null
+      - name: product_id
+        description: "Product identifier sold in the item row."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_products')
+                field: product_id
+      - name: seller_id
+        description: "Seller identifier responsible for the item row."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_sellers')
+                field: seller_id
+      - name: shipping_limit_at_utc
+        description: "Timestamp by which the seller was expected to ship the item."
+      - name: item_price
+        description: "Item price as a positive numeric amount."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: false
+      - name: freight_value
+        description: "Freight amount as a numeric amount."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: batch_id
+        description: "Ingestion batch identifier for lineage and rerun auditing."
+        data_tests:
+          - not_null
+      - name: ingested_at_utc
+        description: "UTC timestamp when the raw batch was ingested."
+        data_tests:
+          - not_null
+      - name: source_file_name
+        description: "Source file name loaded by the ingestion batch."
+        data_tests:
+          - not_null
+
+  - name: stg_payments
+    description: >
+      Standardized Olist payment events. Grain: one row per order_id and
+      payment_sequence.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - order_id
+              - payment_sequence
+    columns:
+      - name: order_id
+        description: "Order identifier for the payment row."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
+      - name: payment_sequence
+        description: "Payment sequence number inside the order."
+        data_tests:
+          - not_null
+      - name: payment_type
+        description: "Standardized payment method."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - boleto
+                  - credit_card
+                  - debit_card
+                  - not_defined
+                  - voucher
+      - name: payment_installments_count
+        description: "Number of installments used for the payment."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: payment_value
+        description: "Payment amount as a numeric value. Zero is valid when the full amount is covered by a voucher."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: batch_id
+        description: "Ingestion batch identifier for lineage and rerun auditing."
+        data_tests:
+          - not_null
+      - name: ingested_at_utc
+        description: "UTC timestamp when the raw batch was ingested."
+        data_tests:
+          - not_null
+      - name: source_file_name
+        description: "Source file name loaded by the ingestion batch."
+        data_tests:
+          - not_null
+
+  - name: stg_reviews
+    description: >
+      Standardized Olist customer reviews. Grain: one row per review_id and
+      order_id.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - review_id
+              - order_id
+    columns:
+      - name: review_id
+        description: "Review identifier."
+        data_tests:
+          - not_null
+      - name: order_id
+        description: "Order identifier attached to the review."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
+      - name: review_score
+        description: "Customer review score from 1 to 5."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: review_comment_title
+        description: "Optional customer-provided review title. Nullable."
+      - name: review_comment_message
+        description: "Optional customer-provided review message. Nullable."
+      - name: review_created_at_utc
+        description: "Timestamp when the review was created."
+        data_tests:
+          - not_null
+      - name: review_answered_at_utc
+        description: "Timestamp when the seller or platform answered the review."
+      - name: batch_id
+        description: "Ingestion batch identifier for lineage and rerun auditing."
+        data_tests:
+          - not_null
+      - name: ingested_at_utc
+        description: "UTC timestamp when the raw batch was ingested."
+        data_tests:
+          - not_null
+      - name: source_file_name
+        description: "Source file name loaded by the ingestion batch."
+        data_tests:
+          - not_null
+
+  - name: stg_customers
+    description: >
+      Standardized Olist customers. Grain: one row per customer_id.
+    columns:
+      - name: customer_id
+        description: "Primary customer identifier."
+        data_tests:
+          - not_null
+          - unique
+      - name: customer_unique_id
+        description: "Stable customer identifier across purchases."
+        data_tests:
+          - not_null
+      - name: customer_zip_code_prefix
+        description: "Brazilian postal code prefix for the customer."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: customer_city
+        description: "Customer city normalized to lowercase for joins and grouping."
+      - name: customer_state
+        description: "Two-letter Brazilian state code."
+        data_tests:
+          - not_null
+      - name: batch_id
+        description: "Ingestion batch identifier for lineage and rerun auditing."
+        data_tests:
+          - not_null
+      - name: ingested_at_utc
+        description: "UTC timestamp when the raw batch was ingested."
+        data_tests:
+          - not_null
+      - name: source_file_name
+        description: "Source file name loaded by the ingestion batch."
+        data_tests:
+          - not_null
+
+  - name: stg_sellers
+    description: >
+      Standardized Olist sellers. Grain: one row per seller_id.
+    columns:
+      - name: seller_id
+        description: "Primary seller identifier."
+        data_tests:
+          - not_null
+          - unique
+      - name: seller_zip_code_prefix
+        description: "Brazilian postal code prefix for the seller."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: seller_city
+        description: "Seller city normalized to lowercase for joins and grouping."
+      - name: seller_state
+        description: "Two-letter Brazilian state code."
+        data_tests:
+          - not_null
+      - name: batch_id
+        description: "Ingestion batch identifier for lineage and rerun auditing."
+        data_tests:
+          - not_null
+      - name: ingested_at_utc
+        description: "UTC timestamp when the raw batch was ingested."
+        data_tests:
+          - not_null
+      - name: source_file_name
+        description: "Source file name loaded by the ingestion batch."
+        data_tests:
+          - not_null
+
+  - name: stg_products
+    description: >
+      Standardized Olist products. Grain: one row per product_id.
+    columns:
+      - name: product_id
+        description: "Primary product identifier."
+        data_tests:
+          - not_null
+          - unique
+      - name: product_category_name
+        description: >
+          Product category normalized to lowercase. Nullable when the source
+          catalog does not provide a category.
+      - name: product_name_length
+        description: "Product name length with source spelling corrected."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: product_description_length
+        description: "Product description length with source spelling corrected."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: product_photos_count
+        description: "Number of product photos."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: product_weight_g
+        description: "Product weight in grams."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: product_length_cm
+        description: "Product length in centimeters."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: product_height_cm
+        description: "Product height in centimeters."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: product_width_cm
+        description: "Product width in centimeters."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: batch_id
+        description: "Ingestion batch identifier for lineage and rerun auditing."
+        data_tests:
+          - not_null
+      - name: ingested_at_utc
+        description: "UTC timestamp when the raw batch was ingested."
+        data_tests:
+          - not_null
+      - name: source_file_name
+        description: "Source file name loaded by the ingestion batch."
+        data_tests:
+          - not_null
+
+  - name: stg_geolocation
+    description: >
+      Standardized Olist geolocation observations. Grain: one row per postal
+      code prefix, city, state, and coordinate pair rounded to six decimals.
+    columns:
+      - name: geolocation_observation_key
+        description: >
+          Stable staging key built from postal code, city, state, and
+          six-decimal coordinate strings for deterministic deduplication.
+        data_tests:
+          - not_null
+          - unique
+      - name: geolocation_zip_code_prefix
+        description: "Brazilian postal code prefix for the observation."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: geolocation_lat
+        description: "Latitude for the postal code observation."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: -90
+                max_value: 90
+                inclusive: true
+      - name: geolocation_lng
+        description: "Longitude for the postal code observation."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: -180
+                max_value: 180
+                inclusive: true
+      - name: geolocation_city
+        description: "Geolocation city normalized to lowercase."
+        data_tests:
+          - not_null
+      - name: geolocation_state
+        description: "Two-letter Brazilian state code for the geolocation row."
+        data_tests:
+          - not_null
+      - name: batch_id
+        description: "Ingestion batch identifier for lineage and rerun auditing."
+        data_tests:
+          - not_null
+      - name: ingested_at_utc
+        description: "UTC timestamp when the raw batch was ingested."
+        data_tests:
+          - not_null
+      - name: source_file_name
+        description: "Source file name loaded by the ingestion batch."
+        data_tests:
+          - not_null
+
+  - name: stg_holidays
+    description: >
+      Standardized public holiday records. Grain: one row per holiday_date,
+      country_code, and holiday_name.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - holiday_date
+              - country_code
+              - holiday_name
+    columns:
+      - name: holiday_date
+        description: "Calendar date of the public holiday."
+        data_tests:
+          - not_null
+      - name: country_code
+        description: "ISO 3166-1 alpha-2 country code."
+        data_tests:
+          - not_null
+      - name: holiday_name
+        description: >
+          Standardized holiday name. Required because it participates in the
+          staging grain with holiday_date and country_code.
+        data_tests:
+          - not_null
+      - name: local_name
+        description: >
+          Local-language holiday name. Nullable when the upstream API does not
+          provide a localized value.
+      - name: is_global
+        description: >
+          Whether the holiday applies nationally. Nullable when the upstream
+          API omits the global flag.
+      - name: counties_json
+        description: >
+          JSON-serialized regional holiday counties. Nullable for national
+          holidays or when no regional counties are provided.
+      - name: holiday_types_json
+        description: >
+          JSON-serialized holiday type labels from Nager.Date. Nullable when
+          the upstream API omits type metadata.
+      - name: launch_year
+        description: >
+          First year the holiday applied. Nullable for holidays without a
+          published launch year.
+      - name: batch_id
+        description: "Ingestion batch identifier for lineage and rerun auditing."
+        data_tests:
+          - not_null
+      - name: ingested_at_utc
+        description: "UTC timestamp when the raw batch was ingested."
+        data_tests:
+          - not_null
+      - name: source_file_name
+        description: "Source file name loaded by the ingestion batch."
+        data_tests:
+          - not_null
+
+  - name: stg_weather_daily
+    description: >
+      Standardized daily weather summaries. Grain: one row per weather_date
+      and location_key.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - weather_date
+              - location_key
+    columns:
+      - name: weather_date
+        description: "Local calendar date represented by the weather summary."
+        data_tests:
+          - not_null
+      - name: location_key
+        description: "Stable warehouse key for the weather location grain."
+        data_tests:
+          - not_null
+      - name: latitude
+        description: "Latitude of the requested weather location."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: -90
+                max_value: 90
+                inclusive: true
+      - name: longitude
+        description: "Longitude of the requested weather location."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: -180
+                max_value: 180
+                inclusive: true
+      - name: units
+        description: "Measurement unit system used for the weather request."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - metric
+                  - imperial
+                  - standard
+      - name: timezone
+        description: >
+          Timezone returned by OpenWeather or configured for the run. Nullable
+          when the upstream response omits timezone metadata.
+      - name: cloud_cover_afternoon
+        description: "Afternoon cloud cover percentage."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: humidity_afternoon
+        description: "Afternoon relative humidity percentage."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: precipitation_total
+        description: "Total precipitation for the weather date."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: temperature_min
+        description: >
+          Minimum daily temperature in the configured units. Nullable when the
+          upstream daily summary omits this metric.
+      - name: temperature_max
+        description: >
+          Maximum daily temperature in the configured units. Nullable when the
+          upstream daily summary omits this metric.
+      - name: temperature_afternoon
+        description: >
+          Afternoon temperature in the configured units. Nullable when omitted
+          by the upstream daily summary.
+      - name: temperature_night
+        description: >
+          Night temperature in the configured units. Nullable when omitted by
+          the upstream daily summary.
+      - name: temperature_evening
+        description: >
+          Evening temperature in the configured units. Nullable when omitted by
+          the upstream daily summary.
+      - name: temperature_morning
+        description: >
+          Morning temperature in the configured units. Nullable when omitted by
+          the upstream daily summary.
+      - name: pressure_afternoon
+        description: >
+          Afternoon atmospheric pressure. Nullable when the upstream daily
+          summary omits pressure metadata.
+      - name: wind_max_speed
+        description: "Maximum wind speed for the weather date."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: wind_max_direction
+        description: "Direction of maximum wind speed in degrees."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 360
+                inclusive: true
+      - name: batch_id
+        description: "Ingestion batch identifier for lineage and rerun auditing."
+        data_tests:
+          - not_null
+      - name: ingested_at_utc
+        description: "UTC timestamp when the raw batch was ingested."
+        data_tests:
+          - not_null
+      - name: source_file_name
+        description: "Source file name loaded by the ingestion batch."
+        data_tests:
+          - not_null

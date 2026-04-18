@@ -1,0 +1,710 @@
+version: 2
+
+sources:
+  - name: raw_olist
+    database: "{{ env_var('GCP_PROJECT_ID', target.database) }}"
+    schema: "{{ env_var('BQ_RAW_OLIST_DATASET', 'raw_olist') }}"
+    description: >
+      Raw Olist marketplace source tables loaded by the Python batch ingestion
+      jobs. These sources preserve source fidelity and add batch metadata for
+      lineage and rerun auditing.
+    loader: python_batch_loader
+    config:
+      loaded_at_field: ingested_at_utc
+      meta:
+        owner: "Yuanyuan Feng"
+        domain: "marketplace"
+        contract_layer: "raw"
+        notes: >
+          Raw Olist tables are static public-dataset backfills. Business logic
+          belongs in staging, intermediate, and marts models. Source freshness
+          is intentionally not configured to avoid false CI alerts on historical
+          data.
+
+    tables:
+      - name: customers
+        description: >
+          Customer dimension source from Olist. Grain: one source row per
+          customer_id.
+        columns:
+          - name: customer_id
+            description: "Source customer identifier used to join orders."
+            data_type: string
+            data_tests:
+              - not_null
+              - unique
+          - name: customer_unique_id
+            description: "Stable customer identifier across purchases."
+            data_type: string
+            data_tests:
+              - not_null
+          - name: customer_zip_code_prefix
+            description: "Brazilian postal code prefix for the customer."
+            data_type: int64
+          - name: customer_city
+            description: "Customer city from the source file."
+            data_type: string
+          - name: customer_state
+            description: "Two-letter Brazilian state code for the customer."
+            data_type: string
+          - name: batch_id
+            description: "Identifier for the ingestion batch that loaded the row."
+            data_type: string
+            data_tests:
+              - not_null
+          - name: ingested_at_utc
+            description: "UTC timestamp when the ingestion batch prepared the row."
+            data_type: timestamp
+            data_tests:
+              - not_null
+          - name: source_file_name
+            description: "Source file name used for the raw load."
+            data_type: string
+            data_tests:
+              - not_null
+
+      - name: geolocation
+        description: >
+          Postal-code geolocation source from Olist. Grain: one raw geolocation
+          observation; repeated postal codes and duplicate coordinates are
+          allowed and consolidated in staging.
+        columns:
+          - name: geolocation_zip_code_prefix
+            description: "Brazilian postal code prefix for the geolocation row."
+            data_type: int64
+            data_tests:
+              - not_null
+          - name: geolocation_lat
+            description: "Latitude for the postal code observation."
+            data_type: float64
+          - name: geolocation_lng
+            description: "Longitude for the postal code observation."
+            data_type: float64
+          - name: geolocation_city
+            description: "City name attached to the postal code observation."
+            data_type: string
+          - name: geolocation_state
+            description: "Two-letter Brazilian state code for the observation."
+            data_type: string
+          - name: batch_id
+            description: "Identifier for the ingestion batch that loaded the row."
+            data_type: string
+            data_tests:
+              - not_null
+          - name: ingested_at_utc
+            description: "UTC timestamp when the ingestion batch prepared the row."
+            data_type: timestamp
+            data_tests:
+              - not_null
+          - name: source_file_name
+            description: "Source file name used for the raw load."
+            data_type: string
+            data_tests:
+              - not_null
+
+      - name: order_items
+        description: >
+          Olist order-item source. Grain: one row per order_id and
+          order_item_id.
+        data_tests:
+          - dbt_utils.unique_combination_of_columns:
+              arguments:
+                combination_of_columns:
+                  - order_id
+                  - order_item_id
+        columns:
+          - name: order_id
+            description: "Order identifier for the item row."
+            data_type: string
+            data_tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('raw_olist', 'orders')
+                    field: order_id
+          - name: order_item_id
+            description: "Item sequence number inside the order."
+            data_type: int64
+            data_tests:
+              - not_null
+          - name: product_id
+            description: "Product identifier sold in the order item."
+            data_type: string
+            data_tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('raw_olist', 'products')
+                    field: product_id
+          - name: seller_id
+            description: "Seller identifier responsible for the order item."
+            data_type: string
+            data_tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('raw_olist', 'sellers')
+                    field: seller_id
+          - name: shipping_limit_date
+            description: "Source shipping deadline timestamp before staging casts."
+            data_type: string
+          - name: price
+            description: "Item price in the source transaction currency."
+            data_type: float64
+            data_tests:
+              - not_null
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 0
+                    inclusive: true
+          - name: freight_value
+            description: "Freight amount charged for the item."
+            data_type: float64
+            data_tests:
+              - not_null
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 0
+                    inclusive: true
+          - name: batch_id
+            description: "Identifier for the ingestion batch that loaded the row."
+            data_type: string
+            data_tests:
+              - not_null
+          - name: ingested_at_utc
+            description: "UTC timestamp when the ingestion batch prepared the row."
+            data_type: timestamp
+            data_tests:
+              - not_null
+          - name: source_file_name
+            description: "Source file name used for the raw load."
+            data_type: string
+            data_tests:
+              - not_null
+
+      - name: order_payments
+        description: >
+          Olist order payment source. Grain: one row per order_id and
+          payment_sequential.
+        data_tests:
+          - dbt_utils.unique_combination_of_columns:
+              arguments:
+                combination_of_columns:
+                  - order_id
+                  - payment_sequential
+        columns:
+          - name: order_id
+            description: "Order identifier for the payment row."
+            data_type: string
+            data_tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('raw_olist', 'orders')
+                    field: order_id
+          - name: payment_sequential
+            description: "Payment sequence number inside the order."
+            data_type: int64
+            data_tests:
+              - not_null
+          - name: payment_type
+            description: "Source payment method category."
+            data_type: string
+            data_tests:
+              - not_null
+              - accepted_values:
+                  arguments:
+                    values:
+                      - boleto
+                      - credit_card
+                      - debit_card
+                      - not_defined
+                      - voucher
+          - name: payment_installments
+            description: "Number of installments used for the payment."
+            data_type: int64
+            data_tests:
+              - not_null
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 0
+                    inclusive: true
+          - name: payment_value
+            description: "Payment amount recorded by Olist."
+            data_type: float64
+            data_tests:
+              - not_null
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 0
+                    inclusive: true
+          - name: batch_id
+            description: "Identifier for the ingestion batch that loaded the row."
+            data_type: string
+            data_tests:
+              - not_null
+          - name: ingested_at_utc
+            description: "UTC timestamp when the ingestion batch prepared the row."
+            data_type: timestamp
+            data_tests:
+              - not_null
+          - name: source_file_name
+            description: "Source file name used for the raw load."
+            data_type: string
+            data_tests:
+              - not_null
+
+      - name: order_reviews
+        description: >
+          Olist order review source. Grain: one source review row. The
+          review_id and order_id pair is treated as the raw uniqueness contract.
+        data_tests:
+          - dbt_utils.unique_combination_of_columns:
+              arguments:
+                combination_of_columns:
+                  - review_id
+                  - order_id
+        columns:
+          - name: review_id
+            description: "Source review identifier."
+            data_type: string
+            data_tests:
+              - not_null
+          - name: order_id
+            description: "Order identifier attached to the review."
+            data_type: string
+            data_tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('raw_olist', 'orders')
+                    field: order_id
+          - name: review_score
+            description: "Customer review score from 1 to 5."
+            data_type: int64
+            data_tests:
+              - not_null
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 1
+                    max_value: 5
+                    inclusive: true
+          - name: review_comment_title
+            description: "Optional customer review title."
+            data_type: string
+          - name: review_comment_message
+            description: "Optional customer review message."
+            data_type: string
+          - name: review_creation_date
+            description: "Source review creation date before staging casts."
+            data_type: string
+          - name: review_answer_timestamp
+            description: "Source review answer timestamp before staging casts."
+            data_type: string
+          - name: batch_id
+            description: "Identifier for the ingestion batch that loaded the row."
+            data_type: string
+            data_tests:
+              - not_null
+          - name: ingested_at_utc
+            description: "UTC timestamp when the ingestion batch prepared the row."
+            data_type: timestamp
+            data_tests:
+              - not_null
+          - name: source_file_name
+            description: "Source file name used for the raw load."
+            data_type: string
+            data_tests:
+              - not_null
+
+      - name: orders
+        description: >
+          Olist order header source. Grain: one row per order_id.
+        columns:
+          - name: order_id
+            description: "Source order identifier."
+            data_type: string
+            data_tests:
+              - not_null
+              - unique
+          - name: customer_id
+            description: "Customer identifier attached to the order."
+            data_type: string
+            data_tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('raw_olist', 'customers')
+                    field: customer_id
+          - name: order_status
+            description: "Source order lifecycle status."
+            data_type: string
+            data_tests:
+              - not_null
+              - accepted_values:
+                  arguments:
+                    values:
+                      - approved
+                      - canceled
+                      - created
+                      - delivered
+                      - invoiced
+                      - processing
+                      - shipped
+                      - unavailable
+          - name: order_purchase_timestamp
+            description: "Source purchase timestamp before staging casts."
+            data_type: string
+            data_tests:
+              - not_null
+          - name: order_approved_at
+            description: "Source approval timestamp before staging casts."
+            data_type: string
+          - name: order_delivered_carrier_date
+            description: "Source carrier handoff timestamp before staging casts."
+            data_type: string
+          - name: order_delivered_customer_date
+            description: "Source customer delivery timestamp before staging casts."
+            data_type: string
+          - name: order_estimated_delivery_date
+            description: "Source estimated delivery timestamp before staging casts."
+            data_type: string
+          - name: batch_id
+            description: "Identifier for the ingestion batch that loaded the row."
+            data_type: string
+            data_tests:
+              - not_null
+          - name: ingested_at_utc
+            description: "UTC timestamp when the ingestion batch prepared the row."
+            data_type: timestamp
+            data_tests:
+              - not_null
+          - name: source_file_name
+            description: "Source file name used for the raw load."
+            data_type: string
+            data_tests:
+              - not_null
+
+      - name: products
+        description: >
+          Olist product catalog source. Grain: one row per product_id.
+        columns:
+          - name: product_id
+            description: "Source product identifier."
+            data_type: string
+            data_tests:
+              - not_null
+              - unique
+          - name: product_category_name
+            description: "Source product category name in Portuguese."
+            data_type: string
+          - name: product_name_lenght
+            description: "Source product name length. Kept with Olist spelling."
+            data_type: float64
+            data_tests:
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 0
+                    inclusive: true
+          - name: product_description_lenght
+            description: >
+              Source product description length. Kept with Olist spelling.
+            data_type: float64
+            data_tests:
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 0
+                    inclusive: true
+          - name: product_photos_qty
+            description: "Number of product photos in the source catalog."
+            data_type: float64
+            data_tests:
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 0
+                    inclusive: true
+          - name: product_weight_g
+            description: "Product weight in grams."
+            data_type: float64
+            data_tests:
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 0
+                    inclusive: true
+          - name: product_length_cm
+            description: "Product length in centimeters."
+            data_type: float64
+            data_tests:
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 0
+                    inclusive: true
+          - name: product_height_cm
+            description: "Product height in centimeters."
+            data_type: float64
+            data_tests:
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 0
+                    inclusive: true
+          - name: product_width_cm
+            description: "Product width in centimeters."
+            data_type: float64
+            data_tests:
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 0
+                    inclusive: true
+          - name: batch_id
+            description: "Identifier for the ingestion batch that loaded the row."
+            data_type: string
+            data_tests:
+              - not_null
+          - name: ingested_at_utc
+            description: "UTC timestamp when the ingestion batch prepared the row."
+            data_type: timestamp
+            data_tests:
+              - not_null
+          - name: source_file_name
+            description: "Source file name used for the raw load."
+            data_type: string
+            data_tests:
+              - not_null
+
+      - name: sellers
+        description: >
+          Olist seller dimension source. Grain: one row per seller_id.
+        columns:
+          - name: seller_id
+            description: "Source seller identifier."
+            data_type: string
+            data_tests:
+              - not_null
+              - unique
+          - name: seller_zip_code_prefix
+            description: "Brazilian postal code prefix for the seller."
+            data_type: int64
+          - name: seller_city
+            description: "Seller city from the source file."
+            data_type: string
+          - name: seller_state
+            description: "Two-letter Brazilian state code for the seller."
+            data_type: string
+          - name: batch_id
+            description: "Identifier for the ingestion batch that loaded the row."
+            data_type: string
+            data_tests:
+              - not_null
+          - name: ingested_at_utc
+            description: "UTC timestamp when the ingestion batch prepared the row."
+            data_type: timestamp
+            data_tests:
+              - not_null
+          - name: source_file_name
+            description: "Source file name used for the raw load."
+            data_type: string
+            data_tests:
+              - not_null
+
+  - name: raw_ext
+    database: "{{ env_var('GCP_PROJECT_ID', target.database) }}"
+    schema: "{{ env_var('BQ_RAW_EXT_DATASET', 'raw_ext') }}"
+    description: >
+      Raw external enrichment sources loaded by Python batch ingestion jobs.
+      These tables provide contextual calendar and weather signals for
+      fulfillment and operations analysis.
+    loader: python_batch_loader
+    config:
+      loaded_at_field: ingested_at_utc
+      meta:
+        owner: "Yuanyuan Feng"
+        domain: "external_enrichment"
+        contract_layer: "raw"
+        notes: >
+          External enrichment is loaded as a bounded backfill for this portfolio
+          project. Source freshness is intentionally not configured until these
+          tables are scheduled as operational incremental feeds.
+
+    tables:
+      - name: holidays
+        description: >
+          Public holiday records from Nager.Date. Grain: one row per
+          holiday_date, country_code, and holiday_name.
+        data_tests:
+          - dbt_utils.unique_combination_of_columns:
+              arguments:
+                combination_of_columns:
+                  - holiday_date
+                  - country_code
+                  - holiday_name
+        columns:
+          - name: holiday_date
+            description: "Calendar date of the public holiday."
+            data_type: date
+            data_tests:
+              - not_null
+          - name: local_name
+            description: "Holiday name in the local language."
+            data_type: string
+          - name: holiday_name
+            description: "Holiday name returned by Nager.Date."
+            data_type: string
+            data_tests:
+              - not_null
+          - name: country_code
+            description: "ISO 3166-1 alpha-2 country code for the holiday."
+            data_type: string
+            data_tests:
+              - not_null
+          - name: is_global
+            description: "Whether the holiday applies nationally."
+            data_type: bool
+          - name: counties_json
+            description: "JSON-serialized regional holiday counties, when present."
+            data_type: string
+          - name: holiday_types_json
+            description: "JSON-serialized Nager.Date holiday types."
+            data_type: string
+          - name: launch_year
+            description: "First year the holiday applied, when provided."
+            data_type: int64
+          - name: batch_id
+            description: "Identifier for the ingestion batch that loaded the row."
+            data_type: string
+            data_tests:
+              - not_null
+          - name: ingested_at_utc
+            description: "UTC timestamp when the ingestion batch prepared the row."
+            data_type: timestamp
+            data_tests:
+              - not_null
+          - name: source_file_name
+            description: "Source file name used for the raw load."
+            data_type: string
+            data_tests:
+              - not_null
+
+      - name: weather_daily
+        description: >
+          Daily weather summary records from OpenWeather One Call API 3.0.
+          Grain: one row per weather_date and location_key.
+        data_tests:
+          - dbt_utils.unique_combination_of_columns:
+              arguments:
+                combination_of_columns:
+                  - weather_date
+                  - location_key
+        columns:
+          - name: weather_date
+            description: "Local calendar date represented by the weather summary."
+            data_type: date
+            data_tests:
+              - not_null
+          - name: location_key
+            description: "Stable warehouse key for the weather location grain."
+            data_type: string
+            data_tests:
+              - not_null
+          - name: latitude
+            description: "Latitude of the requested weather location."
+            data_type: float64
+            data_tests:
+              - not_null
+          - name: longitude
+            description: "Longitude of the requested weather location."
+            data_type: float64
+            data_tests:
+              - not_null
+          - name: timezone
+            description: "Timezone returned by OpenWeather or configured for the run."
+            data_type: string
+          - name: units
+            description: "Measurement unit system used for the weather request."
+            data_type: string
+            data_tests:
+              - not_null
+              - accepted_values:
+                  arguments:
+                    values:
+                      - metric
+                      - imperial
+                      - standard
+          - name: cloud_cover_afternoon
+            description: "Afternoon cloud cover percentage."
+            data_type: float64
+            data_tests:
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 0
+                    max_value: 100
+                    inclusive: true
+          - name: humidity_afternoon
+            description: "Afternoon relative humidity percentage."
+            data_type: float64
+            data_tests:
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 0
+                    max_value: 100
+                    inclusive: true
+          - name: precipitation_total
+            description: "Total precipitation for the weather date."
+            data_type: float64
+            data_tests:
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 0
+                    inclusive: true
+          - name: temperature_min
+            description: "Minimum temperature for the weather date."
+            data_type: float64
+          - name: temperature_max
+            description: "Maximum temperature for the weather date."
+            data_type: float64
+          - name: temperature_afternoon
+            description: "Afternoon temperature."
+            data_type: float64
+          - name: temperature_night
+            description: "Night temperature."
+            data_type: float64
+          - name: temperature_evening
+            description: "Evening temperature."
+            data_type: float64
+          - name: temperature_morning
+            description: "Morning temperature."
+            data_type: float64
+          - name: pressure_afternoon
+            description: "Afternoon atmospheric pressure."
+            data_type: float64
+          - name: wind_max_speed
+            description: "Maximum wind speed for the weather date."
+            data_type: float64
+            data_tests:
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 0
+                    inclusive: true
+          - name: wind_max_direction
+            description: "Direction of maximum wind speed in degrees."
+            data_type: float64
+            data_tests:
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 0
+                    max_value: 360
+                    inclusive: true
+          - name: batch_id
+            description: "Identifier for the ingestion batch that loaded the row."
+            data_type: string
+            data_tests:
+              - not_null
+          - name: ingested_at_utc
+            description: "UTC timestamp when the ingestion batch prepared the row."
+            data_type: timestamp
+            data_tests:
+              - not_null
+          - name: source_file_name
+            description: "Source file name used for the raw load."
+            data_type: string
+            data_tests:
+              - not_null
