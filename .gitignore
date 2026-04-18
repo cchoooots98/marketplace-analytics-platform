@@ -57,8 +57,9 @@ data/
 personal_plan/
 CLAUDE.md
 AGENTS.md
-*/CLAUDE.md
+*/claude.md
 */AGENTS.md
+.claude/
 
 # Swap files
 *.swp

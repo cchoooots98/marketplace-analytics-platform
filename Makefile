@@ -27,10 +27,10 @@ lint:
 	HOME="$(SAFE_HOME)" USERPROFILE="$(SAFE_HOME)" $(PYTHON) -m sqlfluff lint marketplace_analytics_dbt --dialect bigquery
 
 format:
-	HOME="$(SAFE_HOME)" USERPROFILE="$(SAFE_HOME)" BLACK_CACHE_DIR="$(SAFE_HOME)/.cache/black" $(PYTHON) -m black tests
+	HOME="$(SAFE_HOME)" USERPROFILE="$(SAFE_HOME)" BLACK_CACHE_DIR="$(SAFE_HOME)/.cache/black" $(PYTHON) -m black ingestion tests
 
 format-check:
-	HOME="$(SAFE_HOME)" USERPROFILE="$(SAFE_HOME)" BLACK_CACHE_DIR="$(SAFE_HOME)/.cache/black" $(PYTHON) -m black --check tests
+	HOME="$(SAFE_HOME)" USERPROFILE="$(SAFE_HOME)" BLACK_CACHE_DIR="$(SAFE_HOME)/.cache/black" $(PYTHON) -m black --check ingestion tests
 
 test:
 	$(PYTHON) -m pytest -q
