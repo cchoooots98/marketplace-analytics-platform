@@ -18,6 +18,9 @@ clean-targets:
 
 models:
   marketplace_analytics_dbt:
+    # The custom generate_schema_name macro returns these custom schemas
+    # directly, so models build into exact BigQuery datasets such as staging
+    # instead of target_schema_staging.
     staging:
       +materialized: view
       +schema: "{{ env_var('BQ_STAGING_DATASET', 'staging') }}"

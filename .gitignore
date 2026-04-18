@@ -36,6 +36,7 @@ logs/
 
 # dbt
 marketplace_analytics_dbt/target/
+marketplace_analytics_dbt/target_contract_check/
 marketplace_analytics_dbt/dbt_packages/
 marketplace_analytics_dbt/logs/
 
