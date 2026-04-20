@@ -1,0 +1,410 @@
+version: 2
+
+models:
+
+  # ---------------------------------------------------------------------------
+  - name: int_order_value
+    description: >
+      Order-level aggregation of item prices, freight, and payment totals.
+      Grain: one row per order_id. All downstream financial models must read
+      from this model instead of independently summing stg_order_items or
+      stg_payments, which would fan-out on multi-table joins. Orders with no
+      item rows are preserved with zero item value, zero freight, and zero item
+      count so core order identifiers do not disappear.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - order_id
+    columns:
+      - name: order_id
+        description: "Primary order identifier. Grain key."
+        data_tests:
+          - not_null
+      - name: order_item_value
+        description: "Sum of all item prices for the order. Zero when no item rows exist."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: order_freight_total
+        description: "Sum of all freight values for the order. Zero is valid for free shipping."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: order_items_count
+        description: "Number of item rows in the order. Zero is valid for orders without item rows."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: order_payment_total
+        description: >
+          Sum of all payment values for the order. Nullable for orders that have
+          items but no confirmed payment record yet.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: payment_methods_count
+        description: >
+          Count of distinct payment types used for the order. Nullable when no
+          payment record exists.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+
+  # ---------------------------------------------------------------------------
+  - name: int_order_delivery
+    description: >
+      Order-level delivery SLA flags, late delivery day counts, and cancellation
+      status. Optionally enriched with Brazilian public holiday context at the
+      purchase date and configured proxy weather context at the delivery date.
+      Grain: one row per order_id. The single authoritative delivery reference
+      for all marts.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - order_id
+    columns:
+      - name: order_id
+        description: "Primary order identifier. Grain key."
+        data_tests:
+          - not_null
+      - name: customer_id
+        description: "Customer identifier for the order."
+        data_tests:
+          - not_null
+      - name: order_status
+        description: "Order lifecycle status from staging."
+        data_tests:
+          - not_null
+      - name: order_purchased_at_utc
+        description: "Timestamp when the order was purchased."
+        data_tests:
+          - not_null
+      - name: purchase_date
+        description: "Calendar date of the order purchase."
+        data_tests:
+          - not_null
+      - name: delivery_date
+        description: "Calendar date of delivery. Nullable for non-delivered orders."
+      - name: is_delivered
+        description: >
+          True when order_status is 'delivered' and a delivery timestamp exists.
+          Both conditions must hold; a status-only match without a timestamp is
+          treated as not delivered.
+        data_tests:
+          - not_null
+      - name: is_late
+        description: >
+          True when the order was delivered after the estimated delivery date.
+          False for on-time deliveries, non-delivered orders, or orders with a
+          null estimated delivery timestamp.
+        data_tests:
+          - not_null
+      - name: late_days
+        description: >
+          Calendar days past the estimated delivery date. Null when the order is
+          not late. Minimum value of 1 when not null.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: is_cancelled
+        description: "True when order_status is 'canceled'."
+        data_tests:
+          - not_null
+      - name: is_purchase_on_holiday
+        description: >
+          True when the purchase date matches a Brazilian public holiday. False
+          when no holiday match is found. Never null because it defaults to
+          False when holiday data is absent.
+        data_tests:
+          - not_null
+      - name: holiday_name_at_purchase
+        description: >
+          Comma-separated Brazilian holiday name(s) on the purchase date.
+          Nullable when the purchase date is not a public holiday.
+      - name: delivery_weather_location_key
+        description: >
+          Weather location key used for delivery-date enrichment. This is the
+          configured proxy location from OPENWEATHER_LOCATION_KEY, not a
+          customer-level geospatial match.
+      - name: delivery_temperature_max
+        description: >
+          Maximum temperature on the delivery date at the configured proxy
+          weather location. Nullable when weather data is not available.
+      - name: delivery_temperature_min
+        description: >
+          Minimum temperature on the delivery date. Nullable when weather data
+          is unavailable.
+      - name: delivery_precipitation_total
+        description: >
+          Total precipitation on the delivery date. Nullable when weather data
+          is unavailable.
+      - name: delivery_humidity_afternoon
+        description: >
+          Afternoon humidity on the delivery date. Nullable when weather data
+          is unavailable.
+
+  # ---------------------------------------------------------------------------
+  - name: int_customer_order_sequence
+    description: >
+      Order sequence numbers assigned within each physical customer identity
+      using customer_unique_id. Grain: one row per customer_id and order_id.
+      Olist creates a new customer_id per order for the same physical person, so
+      sequencing on customer_id alone would make every customer appear as a
+      first-time buyer. This model corrects that by sequencing on
+      customer_unique_id. Source for repeat-purchase rate and cohort analysis.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - customer_id
+              - order_id
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - customer_unique_id
+              - customer_order_number
+    columns:
+      - name: order_id
+        description: "Order identifier. Part of the grain key."
+        data_tests:
+          - not_null
+      - name: customer_id
+        description: "Order-level customer identifier. Part of the grain key."
+        data_tests:
+          - not_null
+      - name: customer_unique_id
+        description: "Stable physical customer identifier used for sequencing."
+        data_tests:
+          - not_null
+      - name: order_purchased_at_utc
+        description: "Purchase timestamp used for sequence ordering."
+        data_tests:
+          - not_null
+      - name: customer_order_number
+        description: >
+          Sequential order number for the physical customer, starting at 1 for
+          the earliest purchase. Tie-breaking by order_id ensures determinism
+          when two orders share the same timestamp.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: is_first_order
+        description: "True when customer_order_number equals 1."
+        data_tests:
+          - not_null
+      - name: customer_city
+        description: "Customer city from stg_customers."
+      - name: customer_state
+        description: "Two-letter Brazilian state code for the customer."
+        data_tests:
+          - not_null
+
+  # ---------------------------------------------------------------------------
+  - name: int_review_enriched
+    description: >
+      Customer reviews enriched with delivery SLA context, standardized delay
+      bucket classification, and primary product category. Grain: one row per
+      review_id and order_id. Source for customer experience analysis across
+      marts. All joins are left joins from reviews so cancelled and undelivered
+      orders retain their reviews.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - review_id
+              - order_id
+    columns:
+      - name: review_id
+        description: "Review identifier. Part of the grain key."
+        data_tests:
+          - not_null
+      - name: order_id
+        description: "Order identifier. Part of the grain key."
+        data_tests:
+          - not_null
+      - name: review_score
+        description: "Customer review score from 1 (worst) to 5 (best)."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: review_created_at_utc
+        description: "Timestamp when the review was created."
+        data_tests:
+          - not_null
+      - name: has_comment
+        description: >
+          True when the review includes a non-empty comment message after
+          trimming whitespace.
+        data_tests:
+          - not_null
+      - name: time_to_review_days
+        description: >
+          Days from the delivery date to the review creation date. Nullable
+          when the order was not delivered. May be negative when the review
+          was created before the delivery timestamp (data quality signal, not
+          clamped).
+      - name: review_delay_bucket
+        description: >
+          Delivery delay classification: on_time, 1_to_3_days, 4_to_7_days,
+          8_to_14_days, or 15_plus_days. Cancelled and undelivered orders
+          default to on_time. Never null.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - on_time
+                  - 1_to_3_days
+                  - 4_to_7_days
+                  - 8_to_14_days
+                  - 15_plus_days
+      - name: primary_product_category
+        description: >
+          Product category of the most expensive item in the order. Nullable
+          when product data is missing.
+      - name: is_delivered
+        description: >
+          Delivery flag from int_order_delivery. Defaults to false when
+          optional delivery context is missing so downstream boolean grouping
+          stays non-null.
+        data_tests:
+          - not_null
+      - name: is_late
+        description: >
+          Late delivery flag from int_order_delivery. Defaults to false when
+          optional delivery context is missing.
+        data_tests:
+          - not_null
+      - name: is_cancelled
+        description: >
+          Cancellation flag from int_order_delivery. Defaults to false when
+          optional delivery context is missing.
+        data_tests:
+          - not_null
+
+  # ---------------------------------------------------------------------------
+  - name: int_seller_daily_performance
+    description: >
+      Daily seller performance aggregation: revenue, order count, item count,
+      late deliveries, cancellations, and average review score. Grain: one row
+      per seller_id and calendar_date (purchase date). Direct source for
+      mart_seller_performance. Item rows are first rolled up to seller-order
+      grain so GMV remains item-accurate while review averages are not
+      overweighted by multi-item orders.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - seller_id
+              - calendar_date
+    columns:
+      - name: seller_id
+        description: "Seller identifier. Part of the grain key."
+        data_tests:
+          - not_null
+      - name: calendar_date
+        description: "Reporting date based on order purchase date. Part of the grain key."
+        data_tests:
+          - not_null
+      - name: seller_city
+        description: "Seller city from stg_sellers. Nullable when seller record is missing."
+      - name: seller_state
+        description: "Two-letter Brazilian state code for the seller."
+      - name: orders_count
+        description: >
+          Count of distinct orders with at least one item from this seller on
+          this date. A multi-item order counts as one order, not one per item.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: items_count
+        description: "Total number of item rows sold by this seller on this date."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: gmv
+        description: "Sum of item prices for this seller on this date."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: false
+      - name: freight_total
+        description: "Sum of freight values for this seller on this date."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: delivered_orders_count
+        description: >
+          Count of distinct delivered orders for this seller on this date.
+          Denominator support for seller late delivery rate.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: cancelled_orders_count
+        description: >
+          Count of distinct cancelled orders for this seller on this date.
+          A multi-seller order that is cancelled increments each seller's count
+          by 1.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: late_orders_count
+        description: >
+          Count of distinct late delivered orders for this seller on this date.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: avg_review_score
+        description: >
+          Average review score for orders from this seller on this date.
+          Nullable when no reviews exist for the seller on this date.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
