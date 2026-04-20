@@ -16,8 +16,8 @@ project is building toward.
 | Project framing | README and architecture are defined |
 | Environment | Dependency files and `.env.example` exist |
 | BigQuery | Smoke test exists; datasets and tables are not yet created by code |
-| dbt | `marketplace_analytics_dbt` is initialized; no models yet |
-| Ingestion | Folder skeleton exists; loaders are not yet implemented |
+| dbt | Staging and intermediate models are implemented; marts are planned |
+| Ingestion | Olist, holiday, and weather loaders are implemented |
 | Airflow | DAG folder exists; DAGs are not yet implemented |
 | Dashboards | Screenshot folder exists; dashboards are not yet built |
 | CI | Workflow folder exists; workflows are not yet implemented |

@@ -9,12 +9,12 @@ warehouse transformations, tests, documentation, snapshots, and lineage.
 |---|---|
 | dbt project | Initialized |
 | BigQuery profile | Must be configured locally before `dbt debug` |
-| Staging models | Planned |
-| Intermediate models | Planned |
+| Staging models | Implemented with schema tests |
+| Intermediate models | Implemented with schema and singular tests |
 | Marts | Planned |
-| dbt tests | Planned |
+| dbt tests | Implemented for staging and intermediate contracts |
 | dbt snapshots | Planned |
-| dbt docs | Planned |
+| dbt docs | Model and column descriptions in progress |
 
 ## Target Model Layout
 
@@ -80,7 +80,7 @@ dbt docs generate
 
 ## Test Design
 
-When models are implemented, dbt tests should cover:
+Current and future dbt tests should cover:
 
 | Category | Example |
 |---|---|

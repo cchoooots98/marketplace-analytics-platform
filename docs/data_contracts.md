@@ -1,9 +1,9 @@
 # Data Contracts
 
-This document defines the planned table grains, keys, and quality expectations
-for MerchantPulse. It is a design contract until the dbt models are implemented.
-As models are built, each contract should be copied into model descriptions and
-schema tests.
+This document defines the table grains, keys, and quality expectations for
+MerchantPulse. Staging and intermediate contracts are implemented in dbt model
+descriptions and schema tests; mart contracts remain target-state until the mart
+models are built.
 
 ## Contract Rules
 
@@ -43,13 +43,13 @@ not contain complex cross-source business logic.
 |---|---|---|---|
 | `stg_orders` | One order | `order_id` | not null key, valid order status, timestamp casts |
 | `stg_order_items` | One order item | `order_id`, `order_item_id` | not null item key, non-negative price and freight |
-| `stg_payments` | One payment event | `order_id`, `payment_sequential` | non-negative payment value, accepted payment type |
-| `stg_reviews` | One review | `review_id` | review score between 1 and 5 |
+| `stg_payments` | One payment event | `order_id`, `payment_sequence` | non-negative payment value, accepted payment type |
+| `stg_reviews` | One review-order relationship | `review_id`, `order_id` | review score between 1 and 5 |
 | `stg_customers` | One customer | `customer_id` | not null key, standardized location fields |
 | `stg_sellers` | One seller | `seller_id` | not null key, standardized location fields |
 | `stg_products` | One product | `product_id` | not null key, standardized category fields |
 | `stg_geolocation` | One cleaned geolocation record | location fields | deduplication rule documented |
-| `stg_holidays` | One holiday-date-country row | `holiday_date`, `country_code` | valid date and country code |
+| `stg_holidays` | One holiday-date-country-name row | `holiday_date`, `country_code`, `holiday_name` | valid date and country code |
 | `stg_weather_daily` | One date-location row | `weather_date`, `location_key` | valid date, numeric weather fields |
 
 ## Intermediate Layer
@@ -59,11 +59,11 @@ not duplicate rules.
 
 | Model | Grain | Purpose | Required checks |
 |---|---|---|---|
-| `int_order_value` | One order | Aggregate item value, freight, payment value, and payment count | one row per order, values non-negative |
-| `int_order_delivery` | One order | Calculate delivery status, late flag, late days, and cancellation flag | delivered orders have delivered timestamp |
-| `int_customer_order_sequence` | One customer-order relationship | Sequence orders per customer | order number starts at 1 per customer |
+| `int_order_value` | One order | Aggregate item value, freight, payment value, and payment count while preserving all order IDs from `stg_orders` | one row per order, values non-negative, zero item count allowed when no item rows exist |
+| `int_order_delivery` | One order | Calculate delivery status, late flag, late days, cancellation flag, holiday context, and configured proxy weather context | late orders have positive late days; non-late orders have null late days |
+| `int_customer_order_sequence` | One customer-order relationship | Sequence orders per physical customer identity | order number starts at 1 per customer and sequence numbers are unique per customer |
 | `int_review_enriched` | One review or order-review relationship | Connect review score with delivery and product context | review score valid, delay bucket documented |
-| `int_seller_daily_performance` | One seller-date | Aggregate seller order, revenue, cancellation, and delay signals | one row per seller-date |
+| `int_seller_daily_performance` | One seller-date | Aggregate seller order, revenue, delivered, cancellation, delay, and review signals | one row per seller-date; GMV is not inflated; review score is seller-order weighted |
 
 ## Marts Layer
 
@@ -107,8 +107,8 @@ stable grain and a clear business use case.
 
 ## Test Design
 
-No production functions are changed by this documentation update. When the
-models are implemented, tests should cover:
+Staging and intermediate dbt tests now cover the implemented contracts. Mart
+tests should be added when mart models are built:
 
 | Category | Example |
 |---|---|

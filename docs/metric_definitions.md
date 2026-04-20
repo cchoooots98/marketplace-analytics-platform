@@ -32,10 +32,11 @@ of rebuilding formulas in the business intelligence layer.
 | Metric | Formula | Grain | Notes |
 |---|---|---|---|
 | Seller GMV | Sum of seller item value and allocated freight | seller-date | Use item-level grain before aggregating to seller |
-| Seller late delivery rate | Seller late delivered orders divided by seller delivered orders | seller-date | Delivery flag should come from `int_order_delivery` |
+| Seller late delivery rate | Seller late delivered orders divided by seller delivered orders | seller-date | Use `late_orders_count / delivered_orders_count` from `int_seller_daily_performance`; return null when delivered orders are zero |
 | Seller cancellation rate | Seller canceled orders divided by seller orders | seller-date | Define whether multi-seller orders are allocated by item or order |
 | Seller defect rate | Orders with cancellation, late delivery, or low review divided by seller orders | seller-date | The low review threshold should be documented before implementation |
 | Freight-to-item ratio | Freight value divided by item value | seller-date or order | Useful for fulfillment cost monitoring |
+| Seller average review score | Average review score across reviewed seller-orders | seller-date | Multi-item orders should count once per seller-order, not once per item row |
 
 ## Customer and Growth Metrics
 
