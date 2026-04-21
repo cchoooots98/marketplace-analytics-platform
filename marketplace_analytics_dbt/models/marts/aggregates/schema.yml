@@ -1,0 +1,703 @@
+version: 2
+
+models:
+
+  # ---------------------------------------------------------------------------
+  - name: mart_exec_daily
+    description: >
+      Executive daily KPI feed. Grain: one row per calendar_date (purchase-date
+      cohort). All rates use the documented denominator conventions and must
+      never be recomputed in BI. GMV follows the canonical metric definition:
+      item value plus freight for non-cancelled orders. The mart intentionally
+      emits non-empty order dates only.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - calendar_date
+    columns:
+      - name: calendar_date
+        description: "Reporting date. Foreign key to dim_date."
+        data_type: date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: calendar_date
+      - name: year
+        description: "Gregorian year from dim_date."
+        data_type: int64
+        data_tests:
+          - not_null
+      - name: quarter
+        description: "Calendar quarter (1..4)."
+        data_type: int64
+        data_tests:
+          - not_null
+      - name: month
+        description: "Calendar month (1..12)."
+        data_type: int64
+        data_tests:
+          - not_null
+      - name: iso_week
+        description: "ISO week number."
+        data_type: int64
+        data_tests:
+          - not_null
+      - name: day_of_week
+        description: "BigQuery DAYOFWEEK value (1=Sunday)."
+        data_type: int64
+        data_tests:
+          - not_null
+      - name: is_weekend
+        description: "Weekend flag from dim_date."
+        data_type: bool
+        data_tests:
+          - not_null
+      - name: is_holiday
+        description: "Configured public-holiday flag from dim_date."
+        data_type: bool
+        data_tests:
+          - not_null
+      - name: holiday_name
+        description: "Holiday name(s) on the date. Nullable."
+        data_type: string
+      - name: orders_count
+        description: "Orders placed on the date. Greater than zero by construction."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: non_cancelled_orders_count
+        description: "Orders placed on the date that are not cancelled."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: cancelled_orders_count
+        description: "Cancelled orders on the date."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: delivered_orders_count
+        description: "Delivered orders on the date."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: late_orders_count
+        description: "Late delivered orders on the date."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: new_customers_count
+        description: "First-order customers on the date."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: gmv
+        description: "Item plus freight revenue for non-cancelled orders."
+        data_type: numeric
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: items_value
+        description: "Sum of order_item_value across all orders."
+        data_type: numeric
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: freight_total
+        description: "Sum of order_freight_total across all orders."
+        data_type: numeric
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: payment_total
+        description: "Sum of order_payment_total across all orders."
+        data_type: numeric
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: aov
+        description: "gmv / non_cancelled_orders_count. Nullable when denominator is zero."
+        data_type: numeric
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: cancellation_rate
+        description: "cancelled_orders_count / orders_count. Between 0 and 1."
+        data_type: float64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+      - name: late_delivery_rate
+        description: >
+          late_orders_count / delivered_orders_count. Between 0 and 1.
+          Nullable on dates with no deliveries.
+        data_type: float64
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+      - name: reviews_count
+        description: "Review rows for orders placed on the date."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: avg_review_score
+        description: "Average review score on the purchase-date cohort."
+        data_type: float64
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+
+  # ---------------------------------------------------------------------------
+  - name: mart_seller_performance
+    description: >
+      Seller daily performance mart. Grain: one row per (seller_id,
+      calendar_date). Extends int_seller_daily_performance with governed rate
+      logic for AOV, cancellation rate, late delivery rate, and operational
+      defect rate. Customer-experience metrics live in mart_seller_experience.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - seller_id
+              - calendar_date
+    columns:
+      - name: seller_id
+        description: "Seller identifier. Foreign key to dim_seller."
+        data_type: string
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_seller')
+                field: seller_id
+      - name: calendar_date
+        description: "Reporting date. Foreign key to dim_date."
+        data_type: date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: calendar_date
+      - name: orders_count
+        description: "Distinct orders with items from this seller on this date."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: non_cancelled_orders_count
+        description: "Seller orders on the date that are not cancelled."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: items_count
+        description: "Total items sold by the seller on the date."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: items_value
+        description: "Sum of item prices for the seller on the date, including cancelled orders."
+        data_type: numeric
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: freight_total
+        description: "Sum of freight values for the seller on the date, including cancelled orders."
+        data_type: numeric
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: gmv
+        description: "Item plus freight revenue for non-cancelled seller orders on the date."
+        data_type: numeric
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: delivered_orders_count
+        description: "Delivered orders for the seller on the date."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: cancelled_orders_count
+        description: "Cancelled orders for the seller on the date."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: late_orders_count
+        description: "Late delivered orders for the seller on the date."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: operational_defect_orders_count
+        description: "Orders that are cancelled OR late. Each seller-order counts at most once."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: aov
+        description: "gmv / non_cancelled_orders_count."
+        data_type: numeric
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: cancellation_rate
+        description: "cancelled_orders_count / orders_count. Between 0 and 1."
+        data_type: float64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+      - name: late_delivery_rate
+        description: >
+          late_orders_count / delivered_orders_count. Between 0 and 1.
+          Nullable when the seller had no deliveries on the date.
+        data_type: float64
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+      - name: operational_defect_rate
+        description: >
+          operational_defect_orders_count / orders_count. Between 0 and 1.
+          Nullable only when orders_count is zero, which should not happen.
+        data_type: float64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+
+  # ---------------------------------------------------------------------------
+  - name: mart_seller_experience
+    description: >
+      Seller attributable experience mart. Grain: one row per (seller_id,
+      calendar_date). Publishes review coverage and sentiment only on the
+      single-seller attributable order subset so review metrics are never
+      copied across multiple sellers.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - seller_id
+              - calendar_date
+    columns:
+      - name: seller_id
+        description: "Seller identifier. Foreign key to dim_seller."
+        data_type: string
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_seller')
+                field: seller_id
+      - name: calendar_date
+        description: "Reporting date. Foreign key to dim_date."
+        data_type: date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: calendar_date
+      - name: attributable_orders_count
+        description: "Single-seller attributable orders for the seller-date."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: reviewed_attributable_orders_count
+        description: "Attributable orders with at least one review."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: review_coverage_rate
+        description: "reviewed_attributable_orders_count / attributable_orders_count."
+        data_type: float64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+      - name: reviews_count
+        description: "Review-row count across attributable orders in the seller-date slice."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: commented_reviews_count
+        description: "Commented review rows across attributable orders in the seller-date slice."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: avg_review_score
+        description: "Order-weighted average review score across reviewed attributable orders."
+        data_type: float64
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: avg_time_to_review_days
+        description: "Order-weighted average days from delivery to review across reviewed attributable orders."
+        data_type: float64
+      - name: low_review_orders_count
+        description: "Reviewed attributable orders whose order-level average review score is at or below the configured threshold."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: low_review_rate
+        description: "low_review_orders_count / reviewed_attributable_orders_count."
+        data_type: float64
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+
+  # ---------------------------------------------------------------------------
+  - name: mart_fulfillment_ops
+    description: >
+      Fulfillment operations mart. Grain: one row per
+      (purchase_date, customer_state, delivery_delay_bucket). Publishes order
+      population, delivery outcomes, holiday context, and proxy delivery
+      weather. Weather fields are proxy order-weighted averages across each
+      slice's delivery-date distribution, not a single day-level snapshot.
+      Customer-experience metrics are intentionally excluded so the operational
+      contract stays pure.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - purchase_date
+              - customer_state
+              - delivery_delay_bucket
+    columns:
+      - name: purchase_date
+        description: "Calendar date of order purchase. Foreign key to dim_date."
+        data_type: date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: calendar_date
+      - name: customer_state
+        description: "Order-time two-letter customer state snapshot."
+        data_type: string
+        data_tests:
+          - not_null
+      - name: delivery_delay_bucket
+        description: "Standardized delivery delay bucket derived from order delivery fields."
+        data_type: string
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - not_delivered
+                  - on_time
+                  - 1_to_3_days
+                  - 4_to_7_days
+                  - 8_to_14_days
+                  - 15_plus_days
+      - name: orders_count
+        description: "Orders in the cohort slice."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: delivered_orders_count
+        description: "Delivered orders in the slice."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: late_orders_count
+        description: "Late delivered orders in the slice."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: cancelled_orders_count
+        description: "Cancelled orders in the slice."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: avg_late_days
+        description: "Average late_days among late orders only. Nullable when no late orders exist."
+        data_type: float64
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: late_delivery_rate
+        description: >
+          late_orders_count / delivered_orders_count. Between 0 and 1.
+          Nullable when the slice has no delivered orders.
+        data_type: float64
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+      - name: is_purchase_on_holiday
+        description: "True when purchase_date is a configured public holiday."
+        data_type: bool
+        data_tests:
+          - not_null
+      - name: holiday_name_at_purchase
+        description: "Holiday name(s) on the purchase date. Nullable."
+        data_type: string
+      - name: delivery_weather_location_key
+        description: >
+          Proxy delivery-weather location key. Nullable when enrichment is
+          missing. Under the current ingestion design this is usually one
+          configured constant rather than an order-level geospatial match.
+        data_type: string
+      - name: avg_delivery_temperature_max
+        description: >
+          Average proxy delivery-date max temperature across orders in the
+          slice's delivery-date distribution. Nullable.
+        data_type: float64
+      - name: avg_delivery_temperature_min
+        description: >
+          Average proxy delivery-date min temperature across orders in the
+          slice's delivery-date distribution. Nullable.
+        data_type: float64
+      - name: avg_delivery_precipitation_total
+        description: >
+          Average proxy delivery-date precipitation across orders in the
+          slice's delivery-date distribution. Nullable.
+        data_type: float64
+      - name: avg_delivery_humidity_afternoon
+        description: >
+          Average proxy delivery-date afternoon humidity across orders in the
+          slice's delivery-date distribution. Nullable.
+        data_type: float64
+
+  # ---------------------------------------------------------------------------
+  - name: mart_customer_experience
+    description: >
+      Customer-experience mart. Grain: one row per
+      (purchase_date, customer_state, delivery_delay_bucket). Publishes review
+      coverage, sentiment, comment coverage, and time-to-review metrics without
+      mixing those measures into the fulfillment operations contract.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - purchase_date
+              - customer_state
+              - delivery_delay_bucket
+    columns:
+      - name: purchase_date
+        description: "Calendar date of order purchase. Foreign key to dim_date."
+        data_type: date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: calendar_date
+      - name: customer_state
+        description: "Order-time two-letter customer state snapshot."
+        data_type: string
+        data_tests:
+          - not_null
+      - name: delivery_delay_bucket
+        description: "Standardized delivery delay bucket reused across facts and marts."
+        data_type: string
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - not_delivered
+                  - on_time
+                  - 1_to_3_days
+                  - 4_to_7_days
+                  - 8_to_14_days
+                  - 15_plus_days
+      - name: orders_count
+        description: "Orders in the cohort slice."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: reviewed_orders_count
+        description: "Orders in the slice with at least one review."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: reviews_count
+        description: "Review rows in the slice."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: commented_reviews_count
+        description: "Review rows with a non-empty comment."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: avg_review_score
+        description: "Average order-level review score in the slice. Nullable when no reviews exist."
+        data_type: float64
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: avg_time_to_review_days
+        description: "Average order-level days from delivery to review. Nullable when no reviews exist."
+        data_type: float64

@@ -16,6 +16,14 @@ clean-targets:
   - "target"
   - "dbt_packages"
 
+# Project-level vars. Exposed as dbt vars so threshold tuning happens in one
+# place and documentation / tests can cite the same value.
+vars:
+  # Low-review threshold for seller experience metrics. Scores at or below this
+  # value count as low reviewed on the attributable seller-order subset. 2 is
+  # the common detractor band on a 1..5 scale.
+  low_review_score_threshold: 2
+
 models:
   marketplace_analytics_dbt:
     # The custom generate_schema_name macro returns these custom schemas
@@ -28,5 +36,22 @@ models:
       +materialized: view
       +schema: "{{ env_var('BQ_INTERMEDIATE_DATASET', 'intermediate') }}"
     marts:
+      # The folder name is organizational. dim_* and fact_* models published
+      # here are conformed warehouse contracts and may be reused by downstream
+      # facts, post-conformed intermediates, and marts when that keeps a
+      # business definition centralized.
+      # Tables (not views) for marts: BI tools read them repeatedly, so paying the
+      # build cost once beats recomputing every dashboard refresh.
       +materialized: table
       +schema: "{{ env_var('BQ_MARTS_DATASET', 'marts') }}"
+      # Push dbt descriptions into BigQuery relation/column metadata so Metabase,
+      # Looker, and the BigQuery console surface the same contract docs.
+      +persist_docs:
+        relation: true
+        columns: true
+      dimensions:
+        +tags: ["marts", "dimension"]
+      facts:
+        +tags: ["marts", "fact"]
+      aggregates:
+        +tags: ["marts", "aggregate"]

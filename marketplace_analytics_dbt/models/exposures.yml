@@ -1,0 +1,67 @@
+version: 2
+
+exposures:
+  - name: executive_overview_dashboard
+    label: Executive Overview Dashboard
+    type: dashboard
+    maturity: medium
+    url: docs/dashboard_specs.md#dashboard-1-executive-overview
+    description: >
+      Executive revenue, demand, delivery, and review-health dashboard backed
+      only by mart_exec_daily.
+    depends_on:
+      - ref('mart_exec_daily')
+    owner:
+      name: Yuanyuan Feng
+
+  - name: seller_operations_dashboard
+    label: Seller Operations Dashboard
+    type: dashboard
+    maturity: medium
+    url: docs/dashboard_specs.md#dashboard-2-seller-operations
+    description: >
+      Marketplace-operations dashboard for full-population seller commercial
+      and operational metrics backed only by mart_seller_performance.
+    depends_on:
+      - ref('mart_seller_performance')
+    owner:
+      name: Yuanyuan Feng
+
+  - name: seller_experience_dashboard
+    label: Seller Experience Dashboard
+    type: dashboard
+    maturity: medium
+    url: docs/dashboard_specs.md#dashboard-5-seller-experience
+    description: >
+      Seller attributable review-coverage and sentiment dashboard backed only
+      by mart_seller_experience.
+    depends_on:
+      - ref('mart_seller_experience')
+    owner:
+      name: Yuanyuan Feng
+
+  - name: fulfillment_operations_dashboard
+    label: Fulfillment Operations Dashboard
+    type: dashboard
+    maturity: medium
+    url: docs/dashboard_specs.md#dashboard-3-fulfillment-operations
+    description: >
+      Fulfillment operations dashboard for delay, holiday, and proxy weather
+      analysis backed only by mart_fulfillment_ops.
+    depends_on:
+      - ref('mart_fulfillment_ops')
+    owner:
+      name: Yuanyuan Feng
+
+  - name: customer_experience_dashboard
+    label: Customer Experience Dashboard
+    type: dashboard
+    maturity: medium
+    url: docs/dashboard_specs.md#dashboard-4-customer-experience
+    description: >
+      Customer-experience dashboard for review coverage, sentiment, and time-
+      to-review analysis backed only by mart_customer_experience.
+    depends_on:
+      - ref('mart_customer_experience')
+    owner:
+      name: Yuanyuan Feng
