@@ -1,0 +1,225 @@
+version: 2
+
+models:
+
+  # ---------------------------------------------------------------------------
+  - name: dim_date
+    description: >
+      Conformed calendar dimension. Grain: one row per calendar_date. Spans
+      every date used as a reporting key or measure date in downstream facts
+      and marts. Enriched with configured public-holiday flags so purchase-date
+      seasonality analysis uses one shared calendar contract.
+    columns:
+      - name: calendar_date
+        description: "Primary key. Single calendar date (DATE)."
+        data_tests:
+          - not_null
+          - unique
+      - name: year
+        description: "Gregorian year."
+        data_tests:
+          - not_null
+      - name: quarter
+        description: "Calendar quarter from 1 to 4."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 4
+                inclusive: true
+      - name: month
+        description: "Calendar month from 1 to 12."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 12
+                inclusive: true
+      - name: month_name
+        description: "English month name (January, February, ...)."
+        data_tests:
+          - not_null
+      - name: iso_week
+        description: "ISO week number (1..53)."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 53
+                inclusive: true
+      - name: day_of_month
+        description: "Day of the month (1..31)."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 31
+                inclusive: true
+      - name: day_of_week
+        description: >
+          BigQuery DAYOFWEEK value: 1=Sunday through 7=Saturday. This matches
+          BigQuery's native semantics so downstream date math stays consistent.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 7
+                inclusive: true
+      - name: day_name
+        description: "English weekday name (Monday, Tuesday, ...)."
+        data_tests:
+          - not_null
+      - name: is_weekend
+        description: "True when the date falls on Saturday or Sunday."
+        data_tests:
+          - not_null
+      - name: is_holiday
+        description: >
+          True when the date matches a configured public holiday. Driven by the
+          shared holiday_country_code macro. Never null.
+        data_tests:
+          - not_null
+      - name: holiday_name
+        description: >
+          Comma-separated holiday name(s) for the date. Nullable when the date
+          is not a public holiday.
+      - name: first_day_of_month
+        description: "Anchor date of the month containing calendar_date."
+        data_tests:
+          - not_null
+      - name: first_day_of_quarter
+        description: "Anchor date of the quarter containing calendar_date."
+        data_tests:
+          - not_null
+      - name: first_day_of_year
+        description: "Anchor date of the year containing calendar_date."
+        data_tests:
+          - not_null
+      - name: last_day_of_month
+        description: "Last calendar date of the month containing calendar_date."
+        data_tests:
+          - not_null
+
+  # ---------------------------------------------------------------------------
+  - name: dim_customer
+    description: >
+      Canonical business-customer dimension. Grain: one row per
+      customer_unique_id. Publishes current-state customer attributes only.
+      Order-time customer geography belongs on facts so historical orders do
+      not get re-stamped by current customer data.
+    columns:
+      - name: customer_unique_id
+        description: "Primary key. Stable physical-customer identifier across purchases."
+        data_tests:
+          - not_null
+          - unique
+      - name: customer_zip_code_prefix
+        description: "Current-state Brazilian postal code prefix for the customer."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: customer_city
+        description: "Current-state customer city normalized to lowercase."
+      - name: customer_state
+        description: "Current-state two-letter Brazilian state code."
+        data_tests:
+          - not_null
+
+  # ---------------------------------------------------------------------------
+  - name: dim_seller
+    description: >
+      Canonical seller dimension. Grain: one row per seller_id. Publishes
+      seller master attributes only; seller performance metrics belong in
+      mart_seller_performance.
+    columns:
+      - name: seller_id
+        description: "Primary key. Seller identifier."
+        data_tests:
+          - not_null
+          - unique
+      - name: seller_zip_code_prefix
+        description: "Brazilian postal code prefix for the seller."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: seller_city
+        description: "Seller city normalized to lowercase."
+      - name: seller_state
+        description: "Two-letter Brazilian state code."
+        data_tests:
+          - not_null
+
+  # ---------------------------------------------------------------------------
+  - name: dim_product
+    description: >
+      Canonical product dimension. Grain: one row per product_id. Publishes
+      catalog attributes only; commercial performance metrics belong in facts
+      and downstream marts.
+    columns:
+      - name: product_id
+        description: "Primary key. Product identifier."
+        data_tests:
+          - not_null
+          - unique
+      - name: product_category_name
+        description: >
+          Normalized product category. Nullable when the source catalog does
+          not provide a category.
+      - name: product_name_length
+        description: "Product name length."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: product_description_length
+        description: "Product description length."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: product_photos_count
+        description: "Number of product photos."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: product_weight_g
+        description: "Product weight in grams."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: product_length_cm
+        description: "Product length in centimeters."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: product_height_cm
+        description: "Product height in centimeters."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: product_width_cm
+        description: "Product width in centimeters."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true

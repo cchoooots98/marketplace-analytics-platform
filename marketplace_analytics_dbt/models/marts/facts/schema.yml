@@ -1,0 +1,475 @@
+version: 2
+
+models:
+
+  # ---------------------------------------------------------------------------
+  - name: fact_orders
+    description: >
+      Conformed order fact. Grain: one row per order_id. Consolidates delivery
+      SLA flags, financial measures, business-customer identity, and order-time
+      customer geography into one governed contract for downstream marts.
+      customer_id is retained as a source-lineage field; customer_unique_id is
+      the business-customer foreign key resolved by
+      int_customer_order_sequence. Missing sequence rows must fail the contract
+      rather than silently falling back to staging. Materialized incrementally
+      with a merge strategy on order_id and a 30-day lookback window against
+      order_purchased_at_utc. Partitioned by purchase_date and clustered by
+      customer_unique_id plus order_status for BI pruning.
+    config:
+      materialized: incremental
+      incremental_strategy: merge
+      unique_key: order_id
+      on_schema_change: sync_all_columns
+      partition_by:
+        field: purchase_date
+        data_type: date
+        granularity: day
+      cluster_by:
+        - customer_unique_id
+        - order_status
+    columns:
+      - name: order_id
+        description: "Primary key. Order identifier."
+        data_tests:
+          - not_null
+          - unique
+      - name: customer_id
+        description: "Source-lineage customer identifier from the order header."
+        data_tests:
+          - not_null
+      - name: customer_unique_id
+        description: >
+          Business-customer foreign key to dim_customer. Resolved through
+          int_customer_order_sequence so missing customer identity fails fast.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_unique_id
+      - name: customer_zip_code_prefix_at_order
+        description: "Order-time customer postal code snapshot from the source customer row."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: customer_city_at_order
+        description: "Order-time customer city snapshot."
+      - name: customer_state_at_order
+        description: "Order-time two-letter customer state snapshot."
+        data_tests:
+          - not_null
+      - name: order_status
+        description: "Order lifecycle status."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - created
+                  - approved
+                  - invoiced
+                  - processing
+                  - shipped
+                  - delivered
+                  - canceled
+                  - unavailable
+      - name: order_purchased_at_utc
+        description: "Timestamp when the order was purchased."
+        data_tests:
+          - not_null
+      - name: order_approved_at_utc
+        description: "Timestamp when payment was approved. Nullable pre-approval."
+      - name: order_delivered_to_carrier_at_utc
+        description: "Carrier handoff timestamp. Nullable before shipment."
+      - name: order_delivered_to_customer_at_utc
+        description: "Customer delivery timestamp. Nullable for undelivered orders."
+      - name: order_estimated_delivery_at_utc
+        description: "Estimated delivery timestamp. Nullable when source omits it."
+      - name: purchase_date
+        description: "Calendar date of order purchase. Foreign key to dim_date."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: calendar_date
+      - name: delivery_date
+        description: "Calendar date of customer delivery. Nullable for undelivered orders."
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: calendar_date
+      - name: is_delivered
+        description: "True when the order is delivered with a timestamp."
+        data_tests:
+          - not_null
+      - name: is_late
+        description: "True when the order was delivered past the estimate."
+        data_tests:
+          - not_null
+      - name: late_days
+        description: "Days past estimated delivery. Null unless is_late=true."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: is_cancelled
+        description: "True when order_status is 'canceled'."
+        data_tests:
+          - not_null
+      - name: customer_order_number
+        description: "Sequential order number for the physical customer (1 = first)."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: is_first_order
+        description: "True when customer_order_number equals 1."
+        data_tests:
+          - not_null
+      - name: order_item_value
+        description: "Sum of item prices for the order. Zero when no items exist."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: order_freight_total
+        description: "Sum of freight values for the order. Zero for free shipping."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: order_items_count
+        description: "Count of item rows for the order. Zero is valid."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: order_payment_total
+        description: "Sum of payment values. Nullable when no payment row exists yet."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: payment_methods_count
+        description: "Distinct payment types used. Nullable when no payment exists."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: order_total_with_freight
+        description: "order_item_value + order_freight_total. Pre-computed for BI."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: is_purchase_on_holiday
+        description: "True when purchase_date is a configured public holiday."
+        data_tests:
+          - not_null
+      - name: holiday_name_at_purchase
+        description: "Holiday name(s) on the purchase date. Nullable."
+      - name: delivery_weather_location_key
+        description: >
+          Weather location key used for delivery-date enrichment. Nullable.
+          Reflects configured proxy location, not per-order geocoding.
+      - name: delivery_temperature_max
+        description: "Max temperature on delivery day. Nullable."
+      - name: delivery_temperature_min
+        description: "Min temperature on delivery day. Nullable."
+      - name: delivery_precipitation_total
+        description: "Total precipitation on delivery day. Nullable."
+      - name: delivery_humidity_afternoon
+        description: "Afternoon humidity on delivery day. Nullable."
+      - name: dbt_updated_at
+        description: "Timestamp of the incremental run that last wrote this row."
+        data_tests:
+          - not_null
+
+  # ---------------------------------------------------------------------------
+  - name: fact_order_items
+    description: >
+      Line-item order fact. Grain: one row per (order_id, order_item_id).
+      Conformed order context is inherited from fact_orders so downstream marts
+      do not re-resolve customer identity, order-time geography, or SLA flags.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - order_id
+              - order_item_id
+    columns:
+      - name: order_id
+        description: "Order identifier. Foreign key to fact_orders."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fact_orders')
+                field: order_id
+      - name: order_item_id
+        description: "Item sequence inside the order. Part of the grain key."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: customer_id
+        description: "Source-lineage customer identifier inherited from fact_orders."
+        data_tests:
+          - not_null
+      - name: customer_unique_id
+        description: "Business-customer foreign key to dim_customer."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_unique_id
+      - name: customer_zip_code_prefix_at_order
+        description: "Order-time customer postal code snapshot."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: customer_city_at_order
+        description: "Order-time customer city snapshot."
+      - name: customer_state_at_order
+        description: "Order-time two-letter customer state snapshot."
+        data_tests:
+          - not_null
+      - name: seller_id
+        description: "Seller identifier. Foreign key to dim_seller."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_seller')
+                field: seller_id
+      - name: product_id
+        description: "Product identifier. Foreign key to dim_product."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_id
+      - name: product_category_name
+        description: "Product category. Nullable when product has no category."
+      - name: order_status
+        description: "Order lifecycle status from the order header."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - created
+                  - approved
+                  - invoiced
+                  - processing
+                  - shipped
+                  - delivered
+                  - canceled
+                  - unavailable
+      - name: purchase_date
+        description: "Calendar date of order purchase. Foreign key to dim_date."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: calendar_date
+      - name: delivery_date
+        description: "Calendar date of customer delivery. Nullable."
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: calendar_date
+      - name: shipping_limit_at_utc
+        description: "Seller shipping deadline timestamp."
+      - name: item_price
+        description: "Item price excluding freight."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: false
+      - name: freight_value
+        description: "Freight amount charged to the item. Zero is valid."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: item_total_with_freight
+        description: "item_price + freight_value."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: false
+      - name: is_delivered
+        description: "True when the parent order was delivered."
+        data_tests:
+          - not_null
+      - name: is_late
+        description: "True when the parent order was delivered late."
+        data_tests:
+          - not_null
+      - name: late_days
+        description: "Days past estimate for the parent order. Nullable."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: is_cancelled
+        description: "True when the parent order was cancelled."
+        data_tests:
+          - not_null
+
+  # ---------------------------------------------------------------------------
+  - name: fact_reviews
+    description: >
+      Customer-experience fact. Grain: one row per (review_id, order_id).
+      Combines review attributes with conformed order context, business-customer
+      identity, and the shared delivery_delay_bucket contract.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - review_id
+              - order_id
+    columns:
+      - name: review_id
+        description: "Review identifier. Part of the grain key."
+        data_tests:
+          - not_null
+      - name: order_id
+        description: "Order identifier. Foreign key to fact_orders."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fact_orders')
+                field: order_id
+      - name: customer_id
+        description: "Source-lineage customer identifier inherited from fact_orders."
+        data_tests:
+          - not_null
+      - name: customer_unique_id
+        description: "Business-customer foreign key to dim_customer."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_unique_id
+      - name: customer_zip_code_prefix_at_order
+        description: "Order-time customer postal code snapshot."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: customer_city_at_order
+        description: "Order-time customer city snapshot."
+      - name: customer_state_at_order
+        description: "Order-time two-letter customer state snapshot."
+        data_tests:
+          - not_null
+      - name: review_score
+        description: "Customer rating from 1 (worst) to 5 (best)."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: has_comment
+        description: "True when review includes a non-empty comment."
+        data_tests:
+          - not_null
+      - name: review_created_at_utc
+        description: "Timestamp when the review was created."
+        data_tests:
+          - not_null
+      - name: review_answered_at_utc
+        description: "Timestamp when the seller answered the review. Nullable."
+      - name: review_comment_title
+        description: "Optional review title. Nullable."
+      - name: review_comment_message
+        description: "Optional review message. Nullable."
+      - name: purchase_date
+        description: "Calendar date of order purchase. Foreign key to dim_date."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: calendar_date
+      - name: delivered_at_utc
+        description: "Timestamp when the order was delivered. Nullable."
+      - name: primary_product_category
+        description: "Category of the most expensive item in the order. Nullable."
+      - name: is_delivered
+        description: "Delivery flag inherited from int_review_enriched."
+        data_tests:
+          - not_null
+      - name: is_late
+        description: "Late flag inherited from int_review_enriched."
+        data_tests:
+          - not_null
+      - name: is_cancelled
+        description: "Cancellation flag inherited from int_review_enriched."
+        data_tests:
+          - not_null
+      - name: late_days
+        description: "Days past estimate. Nullable unless is_late=true."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: time_to_review_days
+        description: >
+          Days from delivery to review creation. Nullable for undelivered
+          orders. May be negative when the review predates delivery.
+      - name: delivery_delay_bucket
+        description: >
+          Standardized delivery delay bucket reused across facts and marts.
+          Cancelled and undelivered orders map to not_delivered. Never null.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - not_delivered
+                  - on_time
+                  - 1_to_3_days
+                  - 4_to_7_days
+                  - 8_to_14_days
+                  - 15_plus_days
