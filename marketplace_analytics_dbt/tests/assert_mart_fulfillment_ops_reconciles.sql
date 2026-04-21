@@ -1,0 +1,87 @@
+-- Reconciliation test: mart_fulfillment_ops must preserve the shared grain,
+-- core operational counts, and published order population. Holiday alignment
+-- is validated separately. Bucket semantics are governed by the shared
+-- delivery_delay_bucket contract test in
+-- assert_int_review_enriched_delivery_delay_bucket_purity.sql, so this test
+-- focuses on grain-level population parity instead of re-implementing every
+-- bucket boundary again.
+with orders_with_context as (
+
+    select
+        order_id,
+        purchase_date,
+        customer_state_at_order as customer_state,
+        is_delivered,
+        is_late,
+        late_days,
+        is_cancelled,
+        delivery_weather_location_key,
+        delivery_temperature_max,
+        delivery_temperature_min,
+        delivery_precipitation_total,
+        delivery_humidity_afternoon,
+        {{ delivery_delay_bucket(
+            'is_delivered',
+            'is_cancelled',
+            'is_late',
+            'late_days'
+        ) }} as delivery_delay_bucket
+    from {{ ref('fact_orders') }}
+
+),
+
+expected as (
+
+    select
+        purchase_date,
+        customer_state,
+        delivery_delay_bucket,
+        count(*) as orders_count,
+        countif(is_delivered) as delivered_orders_count,
+        countif(is_late) as late_orders_count,
+        countif(is_cancelled) as cancelled_orders_count,
+        avg(case
+            when is_late then cast(late_days as float64)
+        end) as avg_late_days
+    from orders_with_context
+    group by purchase_date, customer_state, delivery_delay_bucket
+
+),
+
+actual as (
+
+    select
+        purchase_date,
+        customer_state,
+        delivery_delay_bucket,
+        orders_count,
+        delivered_orders_count,
+        late_orders_count,
+        cancelled_orders_count,
+        avg_late_days
+    from {{ ref('mart_fulfillment_ops') }}
+
+)
+
+select
+    coalesce(expected.purchase_date, actual.purchase_date) as purchase_date,
+    coalesce(expected.customer_state, actual.customer_state) as customer_state,
+    coalesce(expected.delivery_delay_bucket, actual.delivery_delay_bucket) as delivery_delay_bucket,
+    expected.orders_count as expected_orders_count,
+    actual.orders_count as actual_orders_count
+from expected
+full outer join actual
+    on expected.purchase_date = actual.purchase_date
+    and expected.customer_state = actual.customer_state
+    and expected.delivery_delay_bucket = actual.delivery_delay_bucket
+where
+    expected.purchase_date is null
+    or actual.purchase_date is null
+    or expected.orders_count != actual.orders_count
+    or expected.delivered_orders_count != actual.delivered_orders_count
+    or expected.late_orders_count != actual.late_orders_count
+    or expected.cancelled_orders_count != actual.cancelled_orders_count
+    or not (
+        (expected.avg_late_days is null and actual.avg_late_days is null)
+        or abs(expected.avg_late_days - actual.avg_late_days) <= 0.000001
+    )
