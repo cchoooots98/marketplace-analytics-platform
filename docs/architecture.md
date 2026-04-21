@@ -1,42 +1,20 @@
 # Architecture: MerchantPulse
 
-MerchantPulse is a target production-style analytics platform for marketplace
-revenue and fulfillment reporting. The design follows an ELT pattern: Extract,
-Load, Transform. Source data is loaded into BigQuery first, then dbt transforms
-it into trusted analytics layers.
+MerchantPulse is a production-style analytics platform for marketplace revenue,
+seller operations, seller experience, fulfillment quality, and customer
+experience reporting. The design follows an ELT pattern: source data is loaded
+into BigQuery first, then dbt transforms it into trusted analytics layers.
 
-This document is intentionally split into current state and target state. That
-keeps the portfolio credible while still showing the enterprise-grade design the
-project is building toward.
-
-## 1. Current State
-
-| Area | Current repository state |
-|---|---|
-| Project framing | README and architecture are defined |
-| Environment | Dependency files and `.env.example` exist |
-| BigQuery | Smoke test exists; datasets and tables are not yet created by code |
-| dbt | Staging and intermediate models are implemented; marts are planned |
-| Ingestion | Olist, holiday, and weather loaders are implemented |
-| Airflow | DAG folder exists; DAGs are not yet implemented |
-| Dashboards | Screenshot folder exists; dashboards are not yet built |
-| CI | Workflow folder exists; workflows are not yet implemented |
-
-## 2. Business Context
-
-The platform simulates a marketplace business that needs one trusted reporting
-layer for revenue, fulfillment, seller quality, customer experience, and
-external context such as holidays and weather.
-
-The target consumers are:
+## 1. Business Context
 
 | Persona | Needs |
 |---|---|
-| Executives | Daily revenue, order count, AOV, cancellation rate, late delivery rate, review score |
-| Operations | Seller health, regional delay patterns, fulfillment risk, payment failure trends |
-| Analytics engineers | Documented sources, grains, model lineage, reusable business logic, tests |
+| Executives | Daily revenue, demand, cancellation, delivery, and review health |
+| Marketplace operations | Seller commercial health, operational defects, delivery delay patterns, and customer-state operations views |
+| Customer experience | Review coverage, review sentiment, time-to-review analysis, and attributable seller experience |
+| Analytics engineers | Documented grains, reusable logic, governed marts, and executable contracts |
 
-## 3. System Context
+## 2. System Context
 
 ```mermaid
 flowchart LR
@@ -73,50 +51,25 @@ flowchart LR
     airflow -. triggers .-> transform
     docker -. runs local services .-> airflow
     docker -. runs local services .-> dashboards
-    github -. validates .-> ingestion
     github -. validates .-> transform
 ```
 
-## 4. Data Flow
-
-```mermaid
-flowchart TB
-    source1["Olist orders, items, payments, reviews"]
-    source2["Olist customers, sellers, products, geolocation"]
-    source3["Holiday and weather enrichment"]
-
-    raw_olist[("raw_olist")]
-    raw_ext[("raw_ext")]
-    staging[("staging")]
-    intermediate[("intermediate")]
-    marts[("marts")]
-
-    executive["Executive Overview"]
-    seller_ops["Seller Performance"]
-    fulfillment["Fulfillment and Customer Experience"]
-
-    source1 --> raw_olist
-    source2 --> raw_olist
-    source3 --> raw_ext
-    raw_olist --> staging
-    raw_ext --> staging
-    staging --> intermediate
-    intermediate --> marts
-    marts --> executive
-    marts --> seller_ops
-    marts --> fulfillment
-```
-
-### Layer Responsibilities
+## 3. Warehouse Layering
 
 | Layer | Target dataset | Responsibility | What does not belong here |
 |---|---|---|---|
 | Raw | `raw_olist`, `raw_ext` | Preserve source data and batch metadata | Business rules, metric logic, destructive cleanup |
-| Staging | `staging` | Rename, cast, deduplicate, normalize timestamps and enums | Cross-source business calculations |
-| Intermediate | `intermediate` | Reusable business logic across sources | Dashboard-only formatting |
-| Marts | `marts` | Stable business-ready tables with defined grains | One-off dashboard SQL and duplicated KPI formulas |
+| Staging | `staging` | Rename, cast, normalize, and deduplicate source-shaped records | Cross-source business calculations |
+| Intermediate | `intermediate` | Reusable business logic shared across facts and marts | BI-only formatting or duplicate KPI formulas |
+| Conformed contracts | `marts` datasets for `dim_*` and `fact_*` models | Reusable dimensions and facts shared across subject areas | Subject-specific KPI rollups or dashboard-only logic |
+| Marts | `marts` | Governed subject-area KPI tables for BI consumption | Ad hoc dashboard SQL and inconsistent definitions |
 
-## 5. Target Warehouse Model
+Directory placement in dbt is organizational, not a strict dependency rule.
+`dim_*` models are conformed warehouse contracts, so reusing `dim_date` from an
+intermediate or fact model is intentional when it prevents duplicate business
+definitions.
+
+## 4. Warehouse Model
 
 ```mermaid
 flowchart LR
@@ -137,15 +90,22 @@ flowchart LR
         int_delivery["int_order_delivery"]
         int_sequence["int_customer_order_sequence"]
         int_review["int_review_enriched"]
-        int_seller["int_seller_daily_performance"]
+        int_review_metrics["int_order_review_metrics"]
+        int_seller_perf["int_seller_daily_performance"]
+        int_seller_exp["int_seller_attributable_experience"]
     end
 
-    subgraph marts["Facts, dimensions, and marts"]
-        facts["fact_orders / fact_payments / fact_reviews"]
+    subgraph conformed["Conformed layer"]
         dims["dim_date / dim_customer / dim_seller / dim_product"]
+        facts["fact_orders / fact_order_items / fact_reviews"]
+    end
+
+    subgraph marts["Governed marts"]
         exec["mart_exec_daily"]
-        seller["mart_seller_performance"]
-        ops["mart_fulfillment_ops"]
+        seller_perf["mart_seller_performance"]
+        seller_exp["mart_seller_experience"]
+        fulfill["mart_fulfillment_ops"]
+        cx["mart_customer_experience"]
     end
 
     stg_orders --> int_value
@@ -155,130 +115,94 @@ flowchart LR
     stg_customers --> int_sequence
     stg_reviews --> int_review
     int_delivery --> int_review
-    stg_sellers --> int_seller
+    facts --> int_review_metrics
+    stg_items --> int_seller_perf
+    int_delivery --> int_seller_perf
+
+    stg_customers --> dims
+    stg_sellers --> dims
+    stg_products --> dims
+    stg_holidays --> dims
+
     int_value --> facts
     int_delivery --> facts
-    int_sequence --> dims
+    int_sequence --> facts
     int_review --> facts
-    int_seller --> seller
+
     facts --> exec
-    facts --> ops
+    int_review_metrics --> cx
+    int_review_metrics --> int_seller_exp
+    facts --> int_seller_exp
+    int_seller_perf --> seller_perf
+    int_seller_exp --> seller_exp
+    facts --> fulfill
+    facts --> cx
     dims --> exec
-    dims --> seller
-    stg_holidays --> ops
-    stg_weather --> ops
+    dims --> fulfill
 ```
 
-## 6. Data Quality and Reliability Gates
+## 5. Modeling Principles
 
-Data quality is treated as a platform feature, not as an afterthought. Core
-transaction identifiers must fail fast. Optional enrichment can be missing, but
-that missingness should be visible and documented.
+| Topic | Design choice |
+|---|---|
+| Pure dimensions | `dim_product`, `dim_seller`, and `dim_customer` publish entity attributes only |
+| Conformed dimensions | `dim_*` models are reusable contracts and not merely "last-mile" dashboard tables |
+| Canonical customer identity | `dim_customer` grain is `customer_unique_id`, not source `customer_id` |
+| Historical customer geography | Facts carry `customer_*_at_order` snapshots so historical orders stay historically accurate |
+| Conformed facts | Facts publish governed foreign keys and shared business context once |
+| Governed marts | `mart_exec_daily`, `mart_seller_performance`, `mart_seller_experience`, `mart_fulfillment_ops`, and `mart_customer_experience` are the approved BI contracts |
+| Split seller subject areas | Seller commercial/operational metrics and seller experience metrics are separate contracts |
+| Split subject areas | Fulfillment operations and customer experience are separate marts to avoid mixed semantics |
+| Shared time semantics | Executive, seller, fulfillment, and experience marts cohort by `purchase_date` |
+| Shared bucket semantics | `delivery_delay_bucket` is reused everywhere via macro |
+
+## 6. Published Mart Grains
+
+| Model | Grain | Why |
+|---|---|---|
+| `mart_exec_daily` | One row per `calendar_date` | Canonical executive KPI cohort by purchase date |
+| `mart_seller_performance` | One row per `seller_id`, `calendar_date` | Seller-day commercial and operational monitoring on the full seller-order population |
+| `mart_seller_experience` | One row per `seller_id`, `calendar_date` | Seller-day attributable review coverage and sentiment on the single-seller subset |
+| `mart_fulfillment_ops` | One row per `purchase_date`, `customer_state`, `delivery_delay_bucket` | Order-population operational reporting |
+| `mart_customer_experience` | One row per `purchase_date`, `customer_state`, `delivery_delay_bucket` | Review coverage and sentiment reporting |
+
+## 7. Data Quality And Reliability Gates
 
 ```mermaid
 flowchart TB
     ingest["Ingestion job"]
     raw_checks["Raw checks: required columns, metadata, row count"]
     dbt_parse["dbt parse"]
-    dbt_tests["dbt tests: not null, unique, relationships, accepted values"]
-    custom_tests["Custom tests: business rules and grain checks"]
-    freshness["Freshness checks"]
-    snapshots["Snapshots for history tracking"]
+    dbt_tests["dbt schema tests"]
+    custom_tests["dbt singular reconciliation tests"]
     publish["Publish marts and dashboards"]
 
     ingest --> raw_checks
     raw_checks --> dbt_parse
     dbt_parse --> dbt_tests
     dbt_tests --> custom_tests
-    custom_tests --> freshness
-    freshness --> snapshots
-    snapshots --> publish
+    custom_tests --> publish
 ```
-
-### Planned Checks
 
 | Check type | Example |
 |---|---|
 | Required columns | Raw order data must contain `order_id` and timestamp fields |
-| Metadata | Every raw row should include `ingested_at_utc`, `source_file_name`, and `batch_id` |
-| Grain uniqueness | `mart_exec_daily` should have one row per `calendar_date` |
-| Accepted values | Review score should be between 1 and 5 |
-| Relationship integrity | Order items should reference known orders |
-| Business rule | Delivered orders should have a delivered timestamp |
-| Freshness | Orders and payments target 24-hour freshness; reviews target 48-hour freshness |
+| Grain uniqueness | `mart_exec_daily` has one row per `calendar_date` |
+| Relationship integrity | Facts must resolve `customer_unique_id`, `seller_id`, `product_id`, and reporting dates correctly |
+| Semantic invariant | `delivery_delay_bucket` must match delivery flags and late-day logic |
+| Cross-layer alignment | Holiday semantics come from `dim_date` and remain consistent in facts and marts |
+| Attribution integrity | Seller experience includes only single-seller orders |
+| Reconciliation | Executive, seller, fulfillment, and customer-experience marts reconcile to their upstream facts or reusable intermediates |
+| Published-shape contract | BI-facing marts enforce schema with dbt model contracts and dashboards are declared as dbt exposures |
 
-## 7. Orchestration and Local Runtime
-
-```mermaid
-sequenceDiagram
-    participant Dev as Developer
-    participant Docker as Docker Compose
-    participant Airflow as Airflow
-    participant Python as Python loaders
-    participant BigQuery as BigQuery
-    participant dbt as dbt
-    participant Metabase as Metabase
-
-    Dev->>Docker: start local services
-    Docker->>Airflow: run scheduler and webserver
-    Docker->>Metabase: run dashboard service
-    Airflow->>Python: run ingestion DAG
-    Python->>BigQuery: load raw datasets
-    Airflow->>dbt: run dbt build DAG
-    dbt->>BigQuery: build staging, intermediate, and marts
-    Metabase->>BigQuery: query marts only
-```
-
-## 8. Scope
-
-### In Scope for the target version
-
-- Olist marketplace data ingestion
-- Public holiday and weather enrichment
-- BigQuery raw, staging, intermediate, and marts datasets
-- dbt models, tests, source freshness, snapshots, and docs
-- Metabase dashboards for executives and operations
-- Airflow DAGs for ingestion and dbt execution
-- Docker Compose local runtime
-- GitHub Actions checks for Python, SQL, dbt, and tests
-- Portfolio documentation, architecture images, dashboard screenshots, and interview notes
-
-### Out of Scope for the target version
-
-| Excluded | Reason |
-|---|---|
-| Streaming ingestion | The source data and analytics use case are batch-oriented |
-| Machine learning models | The project is focused on data engineering and analytics engineering |
-| Kubernetes | Docker Compose is enough for the local portfolio runtime |
-| Multi-tenant access control | The project has one portfolio environment |
-| Real production deployment | The target is a reproducible portfolio platform, not a live SaaS system |
-
-## 9. Roadmap by Delivery Phase
-
-```mermaid
-flowchart LR
-    p1["1. Foundation docs and environment"]
-    p2["2. Raw ingestion with batch metadata"]
-    p3["3. dbt staging models and source tests"]
-    p4["4. Intermediate business logic"]
-    p5["5. Facts, dimensions, and marts"]
-    p6["6. Freshness, snapshots, and CI"]
-    p7["7. Metabase dashboards and screenshots"]
-    p8["8. Interview package and resume bullets"]
-
-    p1 --> p2 --> p3 --> p4 --> p5 --> p6 --> p7 --> p8
-```
-
-## 10. Architecture Principles
+## 8. Architecture Principles
 
 - The warehouse is the source of truth for business metrics.
-- Raw data preserves evidence; staging cleans shape; intermediate models hold
-  reusable logic; marts serve business users.
-- Every fact and mart must document its grain before implementation.
-- Dashboards must read marts, not rebuild metric logic.
-- Ingestion and transformations should be idempotent, so reruns do not create
-  duplicates.
-- Core identifiers fail fast; optional enrichment may degrade to null with
-  monitoring.
-- Documentation should match the current repository state and clearly label
-  planned work.
+- Dimensions stay pure; facts capture events; marts own published KPI logic.
+- `customer_unique_id` is the canonical business-customer key.
+- Historical customer geography belongs on facts as order-time snapshots.
+- Seller performance and seller experience are separate contracts with separate populations.
+- Dashboards read marts and must not rebuild KPI logic.
+- Holiday and delay semantics are shared contracts, not per-model reinventions.
+- Ingestion and transformations are idempotent so reruns do not create duplicates.
+- Documentation, tests, and SQL must describe the same contract.

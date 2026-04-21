@@ -34,10 +34,11 @@ business questions -> ingestion -> warehouse modeling -> data quality
 | BigQuery connection smoke test | Started | `tests/test_bigquery_connection.py` |
 | dbt project initialization | Started | `marketplace_analytics_dbt/dbt_project.yml` |
 | Ingestion loaders | Planned | `ingestion/` folder exists; modules not implemented yet |
-| dbt staging, intermediate, and marts | Planned | dbt folders exist; models not implemented yet |
+| dbt staging, intermediate, and marts | Implemented | `marketplace_analytics_dbt/models/` contains staging, intermediate, facts, dimensions, and marts |
 | Airflow orchestration | Planned | `airflow/dags/` folder exists; DAGs not implemented yet |
 | Metabase dashboards | Planned | `dashboards/screenshots/` folder exists |
-| GitHub Actions CI | Planned | `.github/workflows/` folder exists |
+| GitHub Actions CI | Implemented | `.github/workflows/dbt_contracts.yml` |
+| dbt exposures and mart contracts | Implemented | `marketplace_analytics_dbt/models/exposures.yml`, mart `schema.yml` files |
 
 ## Business Questions
 
@@ -106,25 +107,28 @@ For the full system view, see [`docs/architecture.md`](docs/architecture.md).
 
 ## Warehouse Layers
 
-The warehouse follows the common raw -> staging -> intermediate -> marts pattern.
-Think of it like a kitchen: raw data is the delivered ingredients, staging is
-washed and chopped ingredients, intermediate models are reusable components, and
-marts are plated dishes for business users.
+The warehouse follows a common raw -> staging -> reusable logic -> conformed
+contracts -> marts pattern. Think of it like a kitchen: raw data is the
+delivered ingredients, staging is washed and chopped ingredients, intermediate
+models are reusable components, conformed facts and dimensions are the shared
+prepared base, and marts are plated dishes for business users.
 
 | Layer | Target dataset | Responsibility |
 |---|---|---|
 | Raw | `raw_olist`, `raw_ext` | Preserve source records with `ingested_at_utc`, `source_file_name`, and `batch_id` |
 | Staging | `staging` | Standardize names, types, enums, timestamps, and null-like values |
 | Intermediate | `intermediate` | Centralize reusable business logic such as delivery flags and order value |
-| Marts | `marts` | Serve stable analytics tables with one documented grain per model |
+| Conformed | `marts` datasets for `dim_*` and `fact_*` models | Publish reusable dimensions and facts shared across subject areas |
+| Marts | `marts` | Serve stable subject-area KPI tables with one documented grain per model |
 
 ## Planned Analytics Outputs
 
 | Output | Core models | Main metrics |
 |---|---|---|
 | Executive Overview | `mart_exec_daily` | GMV, orders, AOV, cancellation rate, late delivery rate, average review score |
-| Seller Performance | `mart_seller_performance` | seller GMV, late delivery rate, cancellation rate, defect rate, review score |
-| Fulfillment and Customer Experience | `mart_fulfillment_ops` | delivery delay, weather impact, holiday impact, review score by delay bucket |
+| Seller Operations | `mart_seller_performance` | seller GMV, late delivery rate, cancellation rate, operational defect rate |
+| Seller Experience | `mart_seller_experience` | attributable review coverage, attributable review score, low-review rate |
+| Fulfillment and Customer Experience | `mart_fulfillment_ops`, `mart_customer_experience` | delivery delay, weather impact, holiday impact, review score by delay bucket |
 
 Metric definitions live in
 [`docs/metric_definitions.md`](docs/metric_definitions.md).
