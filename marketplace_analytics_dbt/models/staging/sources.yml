@@ -17,9 +17,10 @@ sources:
         contract_layer: "raw"
         notes: >
           Raw Olist tables are static public-dataset backfills. Business logic
-          belongs in staging, intermediate, and marts models. Source freshness
-          is intentionally not configured to avoid false CI alerts on historical
-          data.
+          belongs in staging, intermediate, and marts models. Freshness
+          thresholds below document the intended production SLA even though CI
+          stays parse-only and does not execute warehouse-backed freshness
+          checks.
 
     tables:
       - name: customers
@@ -106,6 +107,11 @@ sources:
         description: >
           Olist order-item source. Grain: one row per order_id and
           order_item_id.
+        config:
+          freshness:
+            warn_after:
+              count: 24
+              period: hour
         data_tests:
           - dbt_utils.unique_combination_of_columns:
               arguments:
@@ -186,6 +192,11 @@ sources:
         description: >
           Olist order payment source. Grain: one row per order_id and
           payment_sequential.
+        config:
+          freshness:
+            warn_after:
+              count: 24
+              period: hour
         data_tests:
           - dbt_utils.unique_combination_of_columns:
               arguments:
@@ -258,6 +269,11 @@ sources:
         description: >
           Olist order review source. Grain: one source review row. The
           review_id and order_id pair is treated as the raw uniqueness contract.
+        config:
+          freshness:
+            warn_after:
+              count: 48
+              period: hour
         data_tests:
           - dbt_utils.unique_combination_of_columns:
               arguments:
@@ -320,6 +336,11 @@ sources:
       - name: orders
         description: >
           Olist order header source. Grain: one row per order_id.
+        config:
+          freshness:
+            warn_after:
+              count: 24
+              period: hour
         columns:
           - name: order_id
             description: "Source order identifier."
@@ -522,14 +543,20 @@ sources:
         contract_layer: "raw"
         notes: >
           External enrichment is loaded as a bounded backfill for this portfolio
-          project. Source freshness is intentionally not configured until these
-          tables are scheduled as operational incremental feeds.
+          project. Freshness thresholds below document the intended production
+          SLA even though CI stays parse-only and does not execute warehouse-
+          backed freshness checks.
 
     tables:
       - name: holidays
         description: >
           Public holiday records from Nager.Date. Grain: one row per
           holiday_date, country_code, and holiday_name.
+        config:
+          freshness:
+            warn_after:
+              count: 30
+              period: day
         data_tests:
           - dbt_utils.unique_combination_of_columns:
               arguments:
@@ -588,6 +615,11 @@ sources:
         description: >
           Daily weather summary records from OpenWeather One Call API 3.0.
           Grain: one row per weather_date and location_key.
+        config:
+          freshness:
+            warn_after:
+              count: 48
+              period: hour
         data_tests:
           - dbt_utils.unique_combination_of_columns:
               arguments:
