@@ -1,0 +1,58 @@
+name: dbt_contracts
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  dbt-parse:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: marketplace_analytics_dbt
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r ../requirements.txt
+
+      - name: Install dbt packages
+        run: dbt deps --target-path target_ci
+
+      - name: Create temporary dbt profile
+        run: |
+          mkdir -p "$RUNNER_TEMP/dbt-profile"
+          cat <<'EOF' > "$RUNNER_TEMP/dbt-profile/profiles.yml"
+          marketplace_analytics_dbt:
+            target: ci
+            outputs:
+              ci:
+                type: bigquery
+                method: oauth
+                project: ci-project
+                dataset: ci_dataset
+                threads: 1
+                location: EU
+                priority: interactive
+                job_execution_timeout_seconds: 300
+                job_retries: 1
+          EOF
+
+      - name: Parse dbt project
+        run: >
+          dbt parse
+          --profiles-dir "$RUNNER_TEMP/dbt-profile"
+          --target ci
+          --no-partial-parse
+          --target-path target_ci
