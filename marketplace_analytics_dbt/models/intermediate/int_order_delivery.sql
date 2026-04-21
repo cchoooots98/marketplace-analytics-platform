@@ -1,11 +1,11 @@
 -- =============================================================================
 -- Model: int_order_delivery
 -- Grain: One row per order_id
--- Source: stg_orders, stg_holidays, stg_weather_daily
+-- Source: stg_orders, dim_date, stg_weather_daily
 -- Purpose: Calculate delivery SLA flags, late delivery day counts, and
---          cancellation status. Optionally enrich with Brazilian public holiday
---          context at purchase date and configured proxy weather context at
---          delivery date.
+--          cancellation status. Optionally enrich with configured public holiday
+--          context from dim_date at purchase date and configured proxy weather
+--          context at delivery date.
 --          This is the single authoritative delivery reference for all marts.
 -- Key fields:
 --   order_id                        STRING     Primary order identifier
@@ -18,7 +18,7 @@
 --   purchase_date                   DATE       Calendar date of purchase
 --   delivery_date                   DATE       Calendar date of delivery; nullable
 --   is_purchase_on_holiday          BOOL       True when purchase date is a
---                                              Brazilian public holiday
+--                                              configured public holiday
 --   holiday_name_at_purchase        STRING     Holiday name(s); nullable
 --   delivery_weather_location_key   STRING     Configured weather location; nullable
 --   delivery_temperature_max        FLOAT64    Max temp on delivery day; nullable
@@ -43,21 +43,16 @@ with orders as (
 
 ),
 
--- Collapse holidays to one row per date before joining to orders.
--- stg_holidays grain is (holiday_date, country_code, holiday_name): a single
--- calendar date can have multiple rows when multiple holidays share a date
--- (e.g. Carnival Monday and Carnival Tuesday). Without this collapse a LEFT JOIN
--- to orders would fan-out, one order becoming two rows. STRING_AGG produces a
--- comma-separated label when multiple holidays share a date.
-holidays_by_date as (
+date_context as (
 
+    -- dim_date is a conformed calendar contract reused across facts,
+    -- post-conformed intermediates, and marts. The folder path is
+    -- organizational; the semantic ownership of holiday meaning lives here.
     select
-        holiday_date,
-        country_code,
-        string_agg(holiday_name order by holiday_name) as holiday_names
-    from {{ ref('stg_holidays') }}
-    where country_code = 'BR'
-    group by holiday_date, country_code
+        calendar_date,
+        is_holiday,
+        holiday_name
+    from {{ ref('dim_date') }}
 
 ),
 
@@ -137,15 +132,15 @@ delivery_flags as (
 
 ),
 
-enriched_with_holidays as (
+enriched_with_calendar as (
 
     select
         df.*,
-        (h.holiday_date is not null) as is_purchase_on_holiday,
-        h.holiday_names            as holiday_name_at_purchase
+        dc.is_holiday as is_purchase_on_holiday,
+        dc.holiday_name as holiday_name_at_purchase
     from delivery_flags as df
-    left join holidays_by_date as h
-        on df.purchase_date = h.holiday_date
+    inner join date_context as dc
+        on df.purchase_date = dc.calendar_date
 
 ),
 
@@ -158,7 +153,7 @@ enriched_with_weather as (
         w.temperature_min      as delivery_temperature_min,
         w.precipitation_total  as delivery_precipitation_total,
         w.humidity_afternoon   as delivery_humidity_afternoon
-    from enriched_with_holidays as ewh
+    from enriched_with_calendar as ewh
     left join weather_daily as w
         on ewh.delivery_date = w.weather_date
 

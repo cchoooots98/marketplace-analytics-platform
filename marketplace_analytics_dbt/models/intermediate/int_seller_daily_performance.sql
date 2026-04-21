@@ -1,22 +1,38 @@
 -- =============================================================================
 -- Model: int_seller_daily_performance
 -- Grain: One row per seller_id and calendar_date
--- Source: stg_order_items, stg_sellers, int_order_delivery, int_review_enriched
--- Purpose: Aggregate daily seller revenue, order count, item count, late
---          delivery signals, cancellation signals, and review scores. Serves as
---          the direct source for mart_seller_performance, keeping aggregation
---          logic in one place.
+-- Source: stg_order_items, int_order_delivery
+-- Purpose: Aggregate daily seller revenue, item volume, and operational
+--          fulfillment signals at seller-date grain. This model is the
+--          authoritative operational base for mart_seller_performance and
+--          intentionally excludes customer-experience metrics so seller
+--          performance and seller experience stay in separate governed
+--          contracts.
+-- KPI contract (matches docs/metric_definitions.md):
+--   gmv                       Item value + freight value, EXCLUDING cancelled
+--                             orders. Aligns the revenue numerator to the
+--                             converted commercial population.
+--   non_cancelled_orders      Count of seller orders that are not cancelled.
+--                             This is the denominator for AOV.
+--   operational_defect        An order is an operational defect when it is
+--                             cancelled OR late. Each seller-order contributes
+--                             at most once (set union, not sum of conditions).
 -- Key fields:
---   seller_id                   STRING     Seller identifier (grain key)
---   calendar_date               DATE       Purchase date (grain key)
---   orders_count                INT64      Distinct orders with items from seller
---   items_count                 INT64      Total items sold by this seller
---   gmv                         NUMERIC    Sum of item prices
---   freight_total               NUMERIC    Sum of freight values
---   delivered_orders_count      INT64      Delivered orders
---   cancelled_orders_count      INT64      Orders marked as cancelled
---   late_orders_count           INT64      Delivered orders that were late
---   avg_review_score            FLOAT64    Average review score; nullable
+--   seller_id                        STRING     Seller identifier (grain key)
+--   calendar_date                    DATE       Purchase date (grain key)
+--   orders_count                     INT64      Distinct seller orders
+--   items_count                      INT64      Total seller items
+--   items_value                      NUMERIC    Sum of item prices (all orders)
+--   freight_total                    NUMERIC    Sum of freight values (all orders)
+--   gmv                              NUMERIC    KPI-aligned revenue (item +
+--                                               freight, excluding cancelled)
+--   non_cancelled_orders_count       INT64      Seller orders that are not
+--                                               cancelled
+--   delivered_orders_count           INT64      Delivered orders
+--   cancelled_orders_count           INT64      Cancelled orders
+--   late_orders_count                INT64      Late delivered orders
+--   operational_defect_orders_count  INT64      Orders that are cancelled OR
+--                                               late (deduped per order)
 -- Update frequency: Daily batch rebuild
 -- =============================================================================
 
@@ -31,16 +47,6 @@ with order_items as (
 
 ),
 
-sellers as (
-
-    select
-        seller_id,
-        seller_city,
-        seller_state
-    from {{ ref('stg_sellers') }}
-
-),
-
 delivery as (
 
     select
@@ -50,20 +56,6 @@ delivery as (
         is_late,
         is_delivered
     from {{ ref('int_order_delivery') }}
-
-),
-
--- Pre-aggregate reviews to one row per order before joining to seller orders.
--- int_review_enriched grain is (review_id, order_id); an order can have multiple
--- review rows. Collapsing to one avg_review_score_for_order row per order
--- prevents review fan-out and keeps seller averages order-weighted.
-reviews as (
-
-    select
-        order_id,
-        avg(cast(review_score as float64)) as avg_review_score_for_order
-    from {{ ref('int_review_enriched') }}
-    group by order_id
 
 ),
 
@@ -88,42 +80,51 @@ items_with_context as (
 ),
 
 -- Collapse item rows to one seller-order row before calculating order-level
--- counts and review averages. This keeps revenue at item grain while preventing
--- multi-item orders from weighting review scores more heavily than one-item
--- orders.
+-- counts and defect flags. This keeps revenue at item grain while preventing
+-- multi-item orders from inflating seller order counts.
 seller_order_rollup as (
 
     select
-        seller_id,
-        order_id,
-        calendar_date,
-        count(*)            as items_count,
-        sum(item_price)     as gmv,
-        sum(freight_value)  as freight_total,
-        logical_or(is_cancelled) as is_cancelled,
-        logical_or(is_late)      as is_late,
-        logical_or(is_delivered) as is_delivered
-    from items_with_context
-    group by seller_id, order_id, calendar_date
+        iwc.seller_id,
+        iwc.order_id,
+        iwc.calendar_date,
+        count(*)                              as items_count,
+        sum(iwc.item_price)                   as items_value,
+        sum(iwc.freight_value)                as freight_total,
+        sum(iwc.item_price + iwc.freight_value) as gross_value,
+        logical_or(iwc.is_cancelled)          as is_cancelled,
+        logical_or(iwc.is_late)               as is_late,
+        logical_or(iwc.is_delivered)          as is_delivered
+    from items_with_context as iwc
+    group by
+        iwc.seller_id,
+        iwc.order_id,
+        iwc.calendar_date
 
 ),
 
 aggregated as (
 
+    -- GMV excludes cancelled orders per docs/metric_definitions.md. items_value
+    -- and freight_total remain unconditional so fulfillment-cost monitoring
+    -- (which wants all freight, including cancelled) still works.
     select
         seller_id,
         calendar_date,
-        count(*)                               as orders_count,
-        sum(items_count)                       as items_count,
-        sum(gmv)                               as gmv,
-        sum(freight_total)                     as freight_total,
-        countif(is_delivered)                  as delivered_orders_count,
-        countif(is_cancelled)                  as cancelled_orders_count,
-        countif(is_late)                       as late_orders_count,
-        avg(r.avg_review_score_for_order)      as avg_review_score
-    from seller_order_rollup as sor
-    left join reviews as r
-        on sor.order_id = r.order_id
+        count(*)                                                         as orders_count,
+        sum(items_count)                                                 as items_count,
+        sum(items_value)                                                 as items_value,
+        sum(freight_total)                                               as freight_total,
+        sum(case when not is_cancelled then gross_value else 0 end)      as gmv,
+        countif(not is_cancelled)                                        as non_cancelled_orders_count,
+        countif(is_delivered)                                            as delivered_orders_count,
+        countif(is_cancelled)                                            as cancelled_orders_count,
+        countif(is_late)                                                 as late_orders_count,
+        countif(
+            is_cancelled
+            or is_late
+        )                                                                as operational_defect_orders_count
+    from seller_order_rollup
     group by seller_id, calendar_date
 
 ),
@@ -131,21 +132,19 @@ aggregated as (
 final as (
 
     select
-        a.seller_id,
-        s.seller_city,
-        s.seller_state,
-        a.calendar_date,
-        a.orders_count,
-        a.items_count,
-        a.gmv,
-        a.freight_total,
-        a.delivered_orders_count,
-        a.cancelled_orders_count,
-        a.late_orders_count,
-        a.avg_review_score
-    from aggregated as a
-    left join sellers as s
-        on a.seller_id = s.seller_id
+        seller_id,
+        calendar_date,
+        orders_count,
+        items_count,
+        items_value,
+        freight_total,
+        gmv,
+        non_cancelled_orders_count,
+        delivered_orders_count,
+        cancelled_orders_count,
+        late_orders_count,
+        operational_defect_orders_count
+    from aggregated
 
 )
 

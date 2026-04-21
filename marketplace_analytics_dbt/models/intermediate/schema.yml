@@ -68,10 +68,10 @@ models:
   - name: int_order_delivery
     description: >
       Order-level delivery SLA flags, late delivery day counts, and cancellation
-      status. Optionally enriched with Brazilian public holiday context at the
-      purchase date and configured proxy weather context at the delivery date.
-      Grain: one row per order_id. The single authoritative delivery reference
-      for all marts.
+      status. Optionally enriched with configured public holiday context from
+      dim_date at the purchase date and configured proxy weather context at the
+      delivery date. Grain: one row per order_id. The single authoritative
+      delivery reference for all marts.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -129,14 +129,14 @@ models:
           - not_null
       - name: is_purchase_on_holiday
         description: >
-          True when the purchase date matches a Brazilian public holiday. False
-          when no holiday match is found. Never null because it defaults to
-          False when holiday data is absent.
+          True when the purchase date matches the conformed dim_date holiday
+          contract. Never null because the calendar dimension owns the holiday
+          semantics.
         data_tests:
           - not_null
       - name: holiday_name_at_purchase
         description: >
-          Comma-separated Brazilian holiday name(s) on the purchase date.
+          Comma-separated configured holiday name(s) on the purchase date.
           Nullable when the purchase date is not a public holiday.
       - name: delivery_weather_location_key
         description: >
@@ -159,6 +159,52 @@ models:
         description: >
           Afternoon humidity on the delivery date. Nullable when weather data
           is unavailable.
+
+  # ---------------------------------------------------------------------------
+  - name: int_order_review_metrics
+    description: >
+      Centralized order-level review aggregation contract. Grain: one row per
+      order_id. All marts and intermediates that need review coverage or
+      sentiment at order grain must read this model instead of re-aggregating
+      fact_reviews independently.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - order_id
+    columns:
+      - name: order_id
+        description: "Order identifier. Grain key."
+        data_tests:
+          - not_null
+      - name: reviews_count
+        description: "Review-row count on the order."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: commented_reviews_count
+        description: "Review rows with non-empty comment text on the order."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: avg_review_score_for_order
+        description: "Average review score across review rows on the order."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: avg_time_to_review_days_for_order
+        description: >
+          Average days from delivery to review across review rows on the order.
+          Nullable when all contributing reviews have null time_to_review_days.
 
   # ---------------------------------------------------------------------------
   - name: int_customer_order_sequence
@@ -267,16 +313,19 @@ models:
           when the order was not delivered. May be negative when the review
           was created before the delivery timestamp (data quality signal, not
           clamped).
-      - name: review_delay_bucket
+      - name: delivery_delay_bucket
         description: >
-          Delivery delay classification: on_time, 1_to_3_days, 4_to_7_days,
-          8_to_14_days, or 15_plus_days. Cancelled and undelivered orders
-          default to on_time. Never null.
+          Delivery delay classification produced by the delivery_delay_bucket
+          macro. Values: not_delivered, on_time, 1_to_3_days, 4_to_7_days,
+          8_to_14_days, 15_plus_days. Cancelled and undelivered orders land in
+          not_delivered so downstream marts can distinguish them from on-time
+          deliveries. Never null.
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values:
+                  - not_delivered
                   - on_time
                   - 1_to_3_days
                   - 4_to_7_days
@@ -309,12 +358,13 @@ models:
   # ---------------------------------------------------------------------------
   - name: int_seller_daily_performance
     description: >
-      Daily seller performance aggregation: revenue, order count, item count,
-      late deliveries, cancellations, and average review score. Grain: one row
-      per seller_id and calendar_date (purchase date). Direct source for
+      Daily seller operations and commercial aggregation. Grain: one row per
+      seller_id and calendar_date (purchase date). Direct source for
       mart_seller_performance. Item rows are first rolled up to seller-order
-      grain so GMV remains item-accurate while review averages are not
-      overweighted by multi-item orders.
+      grain so GMV remains item-accurate while order counts and operational
+      defect flags are not inflated by multi-item orders. Customer-experience
+      metrics are intentionally excluded and live in
+      int_seller_attributable_experience instead.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -330,10 +380,6 @@ models:
         description: "Reporting date based on order purchase date. Part of the grain key."
         data_tests:
           - not_null
-      - name: seller_city
-        description: "Seller city from stg_sellers. Nullable when seller record is missing."
-      - name: seller_state
-        description: "Two-letter Brazilian state code for the seller."
       - name: orders_count
         description: >
           Count of distinct orders with at least one item from this seller on
@@ -352,16 +398,42 @@ models:
               arguments:
                 min_value: 1
                 inclusive: true
-      - name: gmv
-        description: "Sum of item prices for this seller on this date."
+      - name: items_value
+        description: >
+          Sum of item prices for this seller on this date. Includes cancelled
+          orders. Paired with freight_total as an unconditional drill-down.
         data_tests:
           - not_null
           - dbt_utils.accepted_range:
               arguments:
                 min_value: 0
-                inclusive: false
+                inclusive: true
       - name: freight_total
-        description: "Sum of freight values for this seller on this date."
+        description: >
+          Sum of freight values for this seller on this date. Includes
+          cancelled orders so fulfillment-cost monitoring stays accurate.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: gmv
+        description: >
+          KPI-aligned seller revenue: sum of (item_price + freight_value) for
+          non-cancelled orders only. Zero is valid when every order on the
+          seller-date was cancelled.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: non_cancelled_orders_count
+        description: >
+          Count of seller orders that are not cancelled. This is the AOV
+          denominator so revenue and order volume describe the same commercial
+          population.
         data_tests:
           - not_null
           - dbt_utils.accepted_range:
@@ -398,13 +470,81 @@ models:
               arguments:
                 min_value: 0
                 inclusive: true
-      - name: avg_review_score
+      - name: operational_defect_orders_count
         description: >
-          Average review score for orders from this seller on this date.
-          Nullable when no reviews exist for the seller on this date.
+          Count of seller orders that are cancelled OR late. Each seller-order
+          contributes at most once (set union, not sum of conditions) so one
+          cancelled-and-late order is still a single operational defect.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+
+  # ---------------------------------------------------------------------------
+  - name: int_seller_attributable_experience
+    description: >
+      Seller-order experience base for attributable orders only. Grain: one
+      row per seller_id and order_id. Only single-seller orders are included
+      so review coverage and sentiment can be attributed to one seller without
+      copying the same order review across multiple sellers. Review metrics are
+      inherited from int_order_review_metrics to keep the order-level review
+      definition centralized.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - seller_id
+              - order_id
+    columns:
+      - name: seller_id
+        description: "Seller identifier for the attributable order."
+        data_tests:
+          - not_null
+      - name: order_id
+        description: "Order identifier for the attributable seller-order row."
+        data_tests:
+          - not_null
+      - name: calendar_date
+        description: "Order purchase date used for seller-experience cohorting."
+        data_tests:
+          - not_null
+      - name: reviews_count
+        description: "Review-row count on the attributable order. Nullable when the order has no reviews."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: commented_reviews_count
+        description: "Review rows with non-empty comment text on the attributable order."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: avg_review_score_for_order
+        description: >
+          Order-level average review score for the attributable order.
+          Nullable when no reviews exist.
         data_tests:
           - dbt_utils.accepted_range:
               arguments:
                 min_value: 1
                 max_value: 5
                 inclusive: true
+      - name: avg_time_to_review_days_for_order
+        description: >
+          Order-level average days from delivery to review for the attributable
+          order. Nullable when the order has no reviews.
+      - name: is_reviewed_order
+        description: "True when the attributable order has at least one review row."
+        data_tests:
+          - not_null
+      - name: is_low_review_order
+        description: >
+          True when the attributable order average review score is at or below
+          var('low_review_score_threshold'). False for unreviewed orders.
+        data_tests:
+          - not_null

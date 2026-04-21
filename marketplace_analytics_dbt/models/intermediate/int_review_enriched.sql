@@ -10,7 +10,10 @@
 --   order_id                    STRING     Order identifier (grain key)
 --   review_score                INT64      Customer rating 1-5
 --   has_comment                 BOOL       True when a non-empty message exists
---   review_delay_bucket         STRING     Delay classification bucket
+--   delivery_delay_bucket       STRING     Delay classification bucket:
+--                                          not_delivered, on_time, 1_to_3_days,
+--                                          4_to_7_days, 8_to_14_days,
+--                                          15_plus_days
 --   time_to_review_days         INT64      Days from delivery to review creation;
 --                                          nullable; may be negative (DQ signal)
 --   is_delivered                BOOL       From int_order_delivery
@@ -135,16 +138,17 @@ enriched as (
             else null
         end as time_to_review_days,
 
-        -- Cancelled, undelivered, and missing-context orders fall into on_time
-        -- so the bucket is always non-null and safe to group on in marts.
-        case
-            when is_late is null or is_late = false then 'on_time'
-            when late_days between 1 and 3          then '1_to_3_days'
-            when late_days between 4 and 7          then '4_to_7_days'
-            when late_days between 8 and 14         then '8_to_14_days'
-            when late_days >= 15                    then '15_plus_days'
-            else 'on_time'
-        end as review_delay_bucket
+        -- Delegate bucket classification to the shared macro so the boundary
+        -- definitions live in one place. Cancelled / undelivered orders land
+        -- in 'not_delivered' rather than 'on_time'; folding them into on_time
+        -- would make the customer-experience dashboards understate late rates
+        -- and inflate the on-time cohort with orders that were never delivered.
+        {{ delivery_delay_bucket(
+            'is_delivered',
+            'is_cancelled',
+            'is_late',
+            'late_days'
+        ) }} as delivery_delay_bucket
 
     from joined
 
@@ -169,7 +173,7 @@ final as (
         purchase_date,
         has_comment,
         time_to_review_days,
-        review_delay_bucket
+        delivery_delay_bucket
     from enriched
 
 )
