@@ -28,7 +28,7 @@ jobs:
         run: pip install -r ../requirements.txt
 
       - name: Install dbt packages
-        run: dbt deps --target-path target_ci
+        run: dbt deps
 
       - name: Create temporary dbt profile
         run: |

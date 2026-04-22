@@ -78,7 +78,7 @@ jobs:
 
       - name: Install dbt packages
         if: steps.config.outputs.enabled == 'true'
-        run: dbt deps --profiles-dir "$RUNNER_TEMP/dbt-profile" --target runtime
+        run: dbt deps
 
       - name: Run source freshness
         if: steps.config.outputs.enabled == 'true'
