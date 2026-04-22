@@ -14,6 +14,3 @@ pytest
 ruff
 black
 sqlfluff
-
-apache-airflow
-apache-airflow-providers-google

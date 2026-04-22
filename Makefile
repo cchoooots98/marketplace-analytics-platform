@@ -1,46 +1,42 @@
 PYTHON ?= python
-SAFE_HOME := $(CURDIR)
 
-.PHONY: help setup install lint format format-check test ingest dbt-debug dbt-parse
+.PHONY: help setup install install-orchestration lint format format-check test ingest dbt-debug dbt-parse dbt-freshness dbt-snapshot
 
 help:
-	@echo "Available commands:"
-	@echo "  make setup      - create starter folders and copy .env"
-	@echo "  make install    - install dependencies"
-	@echo "  make lint       - run lint tools"
-	@echo "  make format     - format Python files"
-	@echo "  make format-check - check Python formatting"
-	@echo "  make test       - run tests"
-	@echo "  make ingest     - planned ingestion entrypoint placeholder"
-	@echo "  make dbt-debug  - test dbt connection"
-	@echo "  make dbt-parse  - parse dbt project"
+	$(PYTHON) tasks.py --help
 
 setup:
-	mkdir -p airflow/dags ingestion/olist ingestion/holidays ingestion/weather ingestion/utils marketplace_analytics_dbt docs dashboards/screenshots docker .github/workflows logs data/olist
-	cp -n .env.example .env || true
+	$(PYTHON) tasks.py setup
 
 install:
-	$(PYTHON) -m pip install -r requirements.txt
+	$(PYTHON) tasks.py install
+
+install-orchestration:
+	$(PYTHON) tasks.py install-orchestration
 
 lint:
-	HOME="$(SAFE_HOME)" USERPROFILE="$(SAFE_HOME)" $(PYTHON) -m ruff check .
-	HOME="$(SAFE_HOME)" USERPROFILE="$(SAFE_HOME)" $(PYTHON) -m sqlfluff lint marketplace_analytics_dbt --dialect bigquery
+	$(PYTHON) tasks.py lint
 
 format:
-	HOME="$(SAFE_HOME)" USERPROFILE="$(SAFE_HOME)" BLACK_CACHE_DIR="$(SAFE_HOME)/.cache/black" $(PYTHON) -m black ingestion tests
+	$(PYTHON) tasks.py format
 
 format-check:
-	HOME="$(SAFE_HOME)" USERPROFILE="$(SAFE_HOME)" BLACK_CACHE_DIR="$(SAFE_HOME)/.cache/black" $(PYTHON) -m black --check ingestion tests
+	$(PYTHON) tasks.py format-check
 
 test:
-	$(PYTHON) -m pytest -q
+	$(PYTHON) tasks.py test
 
 ingest:
-	@echo "Ingestion entrypoint is planned. Implement ingestion/main.py before using this target."
-	@exit 1
+	$(PYTHON) tasks.py ingest
 
 dbt-debug:
-	cd marketplace_analytics_dbt && dbt debug
+	$(PYTHON) tasks.py dbt-debug
 
 dbt-parse:
-	cd marketplace_analytics_dbt && dbt parse
+	$(PYTHON) tasks.py dbt-parse
+
+dbt-freshness:
+	$(PYTHON) tasks.py dbt-freshness
+
+dbt-snapshot:
+	$(PYTHON) tasks.py dbt-snapshot

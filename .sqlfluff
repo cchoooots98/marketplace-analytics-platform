@@ -1,0 +1,12 @@
+[sqlfluff]
+dialect = bigquery
+templater = jinja
+max_line_length = 120
+exclude_rules = AL01,AL09,JJ01,LT01,LT02,LT05,LT08,LT09,LT12,LT13,LT15,RF02,RF04,ST01,ST03,ST05,ST06,ST09
+
+[sqlfluff:templater:jinja]
+apply_dbt_builtins = True
+load_macros_from_path = marketplace_analytics_dbt/macros
+
+[sqlfluff:templater:jinja:macros]
+env_var = {% macro env_var(name, default='') %}{{ default }}{% endmacro %}

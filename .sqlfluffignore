@@ -1,0 +1,7 @@
+marketplace_analytics_dbt/dbt_packages/
+marketplace_analytics_dbt/target/
+marketplace_analytics_dbt/logs/
+marketplace_analytics_dbt/snapshots/
+# `dim_date.sql` relies on dbt-only env_var chaining that remains covered by
+# `python tasks.py dbt-parse` without adding another SQLFluff templater plugin.
+marketplace_analytics_dbt/models/marts/dimensions/dim_date.sql
