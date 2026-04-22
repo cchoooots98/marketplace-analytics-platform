@@ -1,8 +1,10 @@
+import logging
 from datetime import date
 
 import pandas as pd
 import pytest
 import requests
+from google.api_core.exceptions import GoogleAPIError
 
 from ingestion.holidays import fetch_holidays
 from ingestion.utils.bigquery_client import BigQueryWriteResult
@@ -134,50 +136,13 @@ def test_fetch_public_holidays_returns_api_records() -> None:
     ]
 
 
-def test_fetch_public_holidays_without_session_uses_one_shot_request(
+def test_fetch_public_holidays_without_session_uses_retry_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Validate direct single-year calls do not create a managed session.
+    """Validate direct single-year calls use a retry-enabled managed session.
 
     Args:
-        monkeypatch: Pytest fixture for replacing the requests module call.
-
-    Returns:
-        None.
-    """
-    calls: list[tuple[str, int]] = []
-
-    def fake_get(url: str, *, timeout: int) -> FakeResponse:
-        calls.append((url, timeout))
-        return FakeResponse(
-            [
-                {
-                    "date": "2026-01-01",
-                    "countryCode": "BR",
-                }
-            ]
-        )
-
-    monkeypatch.setattr(fetch_holidays.requests, "get", fake_get)
-
-    records = fetch_holidays.fetch_public_holidays(2026, "BR")
-
-    assert records == [{"date": "2026-01-01", "countryCode": "BR"}]
-    assert calls == [
-        (
-            "https://date.nager.at/api/v3/PublicHolidays/2026/BR",
-            30,
-        )
-    ]
-
-
-def test_fetch_holidays_for_date_range_closes_owned_session(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Validate range fetches close sessions created for connection reuse.
-
-    Args:
-        monkeypatch: Pytest fixture for replacing the requests session factory.
+        monkeypatch: Pytest fixture for replacing the managed session builder.
 
     Returns:
         None.
@@ -194,7 +159,53 @@ def test_fetch_holidays_for_date_range_closes_owned_session(
             )
         ]
     )
-    monkeypatch.setattr(fetch_holidays.requests, "Session", lambda: managed_session)
+    monkeypatch.setattr(
+        fetch_holidays,
+        "build_retry_session",
+        lambda: managed_session,
+    )
+
+    records = fetch_holidays.fetch_public_holidays(2026, "BR")
+
+    assert records == [{"date": "2026-01-01", "countryCode": "BR"}]
+    assert managed_session.calls == [
+        (
+            "https://date.nager.at/api/v3/PublicHolidays/2026/BR",
+            30,
+        )
+    ]
+    assert managed_session.entered is True
+    assert managed_session.exited is True
+
+
+def test_fetch_holidays_for_date_range_closes_owned_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Validate range fetches close sessions created for connection reuse.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing the retry session builder.
+
+    Returns:
+        None.
+    """
+    managed_session = ManagedFakeSession(
+        [
+            FakeResponse(
+                [
+                    {
+                        "date": "2026-01-01",
+                        "countryCode": "BR",
+                    }
+                ]
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        fetch_holidays,
+        "build_retry_session",
+        lambda: managed_session,
+    )
 
     records = fetch_holidays.fetch_holidays_for_date_range(
         date(2026, 1, 1),
@@ -205,6 +216,28 @@ def test_fetch_holidays_for_date_range_closes_owned_session(
     assert records == [{"date": "2026-01-01", "countryCode": "BR"}]
     assert managed_session.entered is True
     assert managed_session.exited is True
+
+
+def test_build_retry_session_mounts_http_retry_adapter() -> None:
+    """Validate the default HTTP session enables retry behavior.
+
+    Returns:
+        None.
+    """
+    session = fetch_holidays.build_retry_session()
+
+    https_adapter = session.adapters["https://"]
+    assert https_adapter.max_retries.total == 5
+    assert https_adapter.max_retries.backoff_factor == 1.0
+    assert set(https_adapter.max_retries.status_forcelist) == {
+        429,
+        500,
+        502,
+        503,
+        504,
+    }
+
+    session.close()
 
 
 def test_fetch_holidays_for_date_range_spans_years_and_filters() -> None:
@@ -403,3 +436,46 @@ def test_load_holidays_writes_to_raw_ext_holidays(
     assert captured_write["table_id"] == "raw_ext.holidays"
     assert captured_write["write_mode"] == "replace"
     assert write_result.job_id == "holiday_job"
+
+
+def test_main_returns_one_on_google_api_error(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Validate CLI BigQuery runtime failures return exit code 1 with traceback.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing runtime collaborators.
+        caplog: Pytest fixture for capturing log records.
+
+    Returns:
+        None.
+    """
+    monkeypatch.setattr(fetch_holidays, "load_dotenv", lambda: None)
+    monkeypatch.setattr(
+        fetch_holidays, "configure_google_application_credentials", lambda _: None
+    )
+    monkeypatch.setattr(fetch_holidays, "create_bigquery_client", lambda **_: object())
+
+    def fake_load_holidays(*args: object, **kwargs: object) -> BigQueryWriteResult:
+        raise GoogleAPIError("load failed")
+
+    monkeypatch.setattr(fetch_holidays, "load_holidays", fake_load_holidays)
+
+    with caplog.at_level(logging.ERROR):
+        exit_code = fetch_holidays.main(
+            [
+                "--start-date",
+                "2026-01-01",
+                "--end-date",
+                "2026-01-02",
+                "--project-id",
+                "marketplace-prod",
+                "--location",
+                "EU",
+            ]
+        )
+
+    assert exit_code == 1
+    assert "Holiday ingestion failed" in caplog.text
+    assert caplog.records[-1].exc_info is not None

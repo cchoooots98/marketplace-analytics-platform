@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from google.api_core.exceptions import GoogleAPIError
+from pandas.errors import ParserError
 
 from ingestion.olist import raw_csv_loader
 from ingestion.olist.raw_csv_loader import OlistRawTableSpec
@@ -350,6 +352,50 @@ def test_run_olist_loader_fails_before_csv_read_when_bigquery_config_is_invalid(
     exit_code = raw_csv_loader.run_olist_loader(["source.csv"], TEST_SPEC)
 
     assert exit_code == 1
+
+
+@pytest.mark.parametrize(
+    "raised_exception",
+    [
+        pytest.param(FileNotFoundError("missing csv"), id="file_not_found"),
+        pytest.param(ParserError("malformed csv"), id="parser_error"),
+        pytest.param(GoogleAPIError("load failed"), id="google_api_error"),
+    ],
+)
+def test_run_olist_loader_returns_one_for_handled_runtime_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    raised_exception: Exception,
+) -> None:
+    """Validate handled loader failures return exit code 1 with traceback logs.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing environment and collaborators.
+        caplog: Pytest fixture for capturing log records.
+        raised_exception: Handled runtime exception to inject.
+
+    Returns:
+        None.
+    """
+    monkeypatch.setenv("GCP_PROJECT_ID", "marketplace-prod")
+    monkeypatch.setenv("BIGQUERY_LOCATION", "EU")
+    monkeypatch.setattr(raw_csv_loader, "load_dotenv", lambda: None)
+    monkeypatch.setattr(
+        raw_csv_loader, "configure_google_application_credentials", lambda _: None
+    )
+    monkeypatch.setattr(raw_csv_loader, "create_bigquery_client", lambda **_: object())
+
+    def fake_load_raw_csv(*args: object, **kwargs: object) -> BigQueryWriteResult:
+        raise raised_exception
+
+    monkeypatch.setattr(raw_csv_loader, "load_raw_csv", fake_load_raw_csv)
+
+    with caplog.at_level(logging.ERROR):
+        exit_code = raw_csv_loader.run_olist_loader(["source.csv"], TEST_SPEC)
+
+    assert exit_code == 1
+    assert "Olist orders ingestion failed" in caplog.text
+    assert caplog.records[-1].exc_info is not None
 
 
 def test_configure_google_application_credentials_exports_resolved_path(

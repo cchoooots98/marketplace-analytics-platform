@@ -1,8 +1,11 @@
+import logging
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
 import pytest
+from google.api_core.exceptions import GoogleAPIError
+from pandas.errors import ParserError
 
 from ingestion import main as ingestion_main
 from ingestion.utils.bigquery_client import (
@@ -316,6 +319,49 @@ def test_main_bigquery_config_failure_stops_before_expensive_work(
     )
 
     assert exit_code == 1
+
+
+@pytest.mark.parametrize(
+    "raised_exception",
+    [
+        pytest.param(GoogleAPIError("load failed"), id="google_api_error"),
+        pytest.param(ParserError("malformed csv"), id="parser_error"),
+    ],
+)
+def test_main_returns_one_for_handled_runtime_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    raised_exception: Exception,
+) -> None:
+    """Validate handled runtime failures return exit code 1 with traceback logs.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing collaborators.
+        caplog: Pytest fixture for capturing log records.
+        raised_exception: Handled runtime exception to inject.
+
+    Returns:
+        None.
+    """
+    monkeypatch.setenv("GCP_PROJECT_ID", "marketplace-prod")
+    monkeypatch.setenv("BIGQUERY_LOCATION", "EU")
+    monkeypatch.setattr(ingestion_main, "load_dotenv", lambda: None)
+    monkeypatch.setattr(
+        ingestion_main, "configure_google_application_credentials", lambda _: None
+    )
+    monkeypatch.setattr(ingestion_main, "create_bigquery_client", lambda **_: object())
+
+    def fake_run_olist_loaders(*args: object, **kwargs: object) -> list[object]:
+        raise raised_exception
+
+    monkeypatch.setattr(ingestion_main, "run_olist_loaders", fake_run_olist_loaders)
+
+    with caplog.at_level(logging.ERROR):
+        exit_code = ingestion_main.main(["--skip-holidays", "--skip-weather"])
+
+    assert exit_code == 1
+    assert "Unified ingestion failed" in caplog.text
+    assert caplog.records[-1].exc_info is not None
 
 
 def _write_result(table_id: str) -> BigQueryWriteResult:

@@ -1,8 +1,10 @@
+import logging
 from datetime import date
 
 import pandas as pd
 import pytest
 import requests
+from google.api_core.exceptions import GoogleAPIError
 
 from ingestion.weather import fetch_weather_daily
 from ingestion.utils.bigquery_client import BigQueryWriteResult
@@ -68,6 +70,14 @@ class FakeSession:
         self.calls.append({"url": url, "params": params, "timeout": timeout})
         return self.responses.pop(0)
 
+    def __enter__(self) -> "FakeSession":
+        """Support context-manager use in production code."""
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        """Do nothing on context-manager exit for tests."""
+        return None
+
 
 def _weather_config(max_api_calls: int = 900) -> fetch_weather_daily.WeatherDailyConfig:
     """Build a valid weather config for tests."""
@@ -126,6 +136,29 @@ def test_fetch_daily_weather_uses_day_summary_endpoint() -> None:
     assert session.calls[0]["url"].endswith("/data/3.0/onecall/day_summary")
     assert session.calls[0]["params"]["date"] == "2026-01-01"
     assert "hourly" not in session.calls[0]["url"]
+
+
+def test_fetch_daily_weather_without_session_uses_retry_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Validate one-shot weather fetches use a retry-enabled managed session.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing the retry session builder.
+
+    Returns:
+        None.
+    """
+    session = FakeSession([FakeResponse(_daily_payload())])
+    monkeypatch.setattr(fetch_weather_daily, "build_retry_session", lambda: session)
+
+    record = fetch_weather_daily.fetch_daily_weather(
+        date(2026, 1, 1),
+        _weather_config(),
+    )
+
+    assert record["date"] == "2026-01-01"
+    assert session.calls[0]["params"]["date"] == "2026-01-01"
 
 
 def test_normalize_daily_weather_returns_expected_row() -> None:
@@ -247,6 +280,21 @@ def test_fetch_daily_weather_raises_http_errors() -> None:
         )
 
 
+def test_build_retry_session_mounts_http_retry_adapter() -> None:
+    """Validate the default weather HTTP session enables retry behavior.
+
+    Returns:
+        None.
+    """
+    session = fetch_weather_daily.build_retry_session()
+
+    https_adapter = session.adapters["https://"]
+    assert https_adapter.max_retries.total == 5
+    assert https_adapter.max_retries.backoff_factor == 1.0
+
+    session.close()
+
+
 def test_load_weather_daily_writes_to_raw_ext_weather_daily(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -317,3 +365,60 @@ def test_load_weather_daily_writes_to_raw_ext_weather_daily(
     assert captured_write["table_id"] == "raw_ext.weather_daily"
     assert captured_write["write_mode"] == "replace"
     assert write_result.job_id == "weather_job"
+
+
+def test_main_returns_one_on_google_api_error(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Validate CLI BigQuery runtime failures return exit code 1 with traceback.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing runtime collaborators.
+        caplog: Pytest fixture for capturing log records.
+
+    Returns:
+        None.
+    """
+    monkeypatch.setattr(fetch_weather_daily, "load_dotenv", lambda: None)
+    monkeypatch.setattr(
+        fetch_weather_daily,
+        "configure_google_application_credentials",
+        lambda _: None,
+    )
+    monkeypatch.setattr(
+        fetch_weather_daily,
+        "create_bigquery_client",
+        lambda **_: object(),
+    )
+
+    def fake_load_weather_daily(*args: object, **kwargs: object) -> BigQueryWriteResult:
+        raise GoogleAPIError("load failed")
+
+    monkeypatch.setattr(
+        fetch_weather_daily, "load_weather_daily", fake_load_weather_daily
+    )
+
+    with caplog.at_level(logging.ERROR):
+        exit_code = fetch_weather_daily.main(
+            [
+                "--start-date",
+                "2026-01-01",
+                "--end-date",
+                "2026-01-01",
+                "--project-id",
+                "marketplace-prod",
+                "--location",
+                "EU",
+                "--api-key",
+                "test-key",
+                "--latitude",
+                "-23.5505",
+                "--longitude",
+                "-46.6333",
+            ]
+        )
+
+    assert exit_code == 1
+    assert "Weather daily ingestion failed" in caplog.text
+    assert caplog.records[-1].exc_info is not None
