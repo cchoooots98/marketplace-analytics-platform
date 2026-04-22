@@ -6,7 +6,21 @@ import logging
 import os
 from pathlib import Path
 
+import pandas as pd
+import requests
+from google.api_core.exceptions import GoogleAPIError
+
 from ingestion.utils.bigquery_client import BigQueryConfigurationError
+
+CLI_FAILURE_EXIT_CODE = 1
+CLI_HANDLED_EXCEPTIONS = (
+    BigQueryConfigurationError,
+    FileNotFoundError,
+    ValueError,
+    requests.RequestException,
+    GoogleAPIError,
+    pd.errors.ParserError,
+)
 
 
 def configure_logging_from_env() -> None:
@@ -72,3 +86,22 @@ def configure_google_application_credentials(
     resolved_credentials_path = normalized_credentials_path.resolve()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(resolved_credentials_path)
     return resolved_credentials_path
+
+
+def log_cli_failure(
+    logger: logging.Logger,
+    job_name: str,
+    exc: Exception,
+) -> int:
+    """Log a standardized CLI failure and return the shared exit code.
+
+    Args:
+        logger: Module logger for the CLI entrypoint.
+        job_name: Human-readable job label for failure context.
+        exc: Handled exception that caused the CLI to fail.
+
+    Returns:
+        Standard non-zero process exit code for controlled failures.
+    """
+    logger.error("%s failed: %s", job_name, exc, exc_info=True)
+    return CLI_FAILURE_EXIT_CODE

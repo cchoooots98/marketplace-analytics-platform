@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Sequence
 
 import pandas as pd
-import requests
 from dotenv import load_dotenv
 from google.cloud import bigquery
 
@@ -29,14 +28,15 @@ from ingestion.olist.load_orders import load_orders_csv
 from ingestion.olist.load_products import load_products_csv
 from ingestion.olist.load_sellers import load_sellers_csv
 from ingestion.utils.bigquery_client import (
-    BigQueryConfigurationError,
     BigQueryWriteResult,
     create_bigquery_client,
 )
 from ingestion.utils.date_range import parse_date, validate_date_range
 from ingestion.utils.runtime_config import (
+    CLI_HANDLED_EXCEPTIONS,
     configure_google_application_credentials,
     configure_logging_from_env,
+    log_cli_failure,
     require_cli_value,
 )
 from ingestion.weather.fetch_weather_daily import (
@@ -318,14 +318,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 location=location,
             )
 
-    except (
-        BigQueryConfigurationError,
-        FileNotFoundError,
-        ValueError,
-        requests.RequestException,
-    ) as exc:
-        logger.error("Unified ingestion failed: %s", exc)
-        return 1
+    except CLI_HANDLED_EXCEPTIONS as exc:
+        return log_cli_failure(logger, "Unified ingestion", exc)
 
     return 0
 

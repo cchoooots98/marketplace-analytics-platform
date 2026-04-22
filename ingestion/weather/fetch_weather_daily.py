@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Sequence
+from collections.abc import Iterator
 
 import pandas as pd
 import requests
@@ -16,7 +18,6 @@ from google.cloud import bigquery
 
 from ingestion.utils.batch_metadata import add_batch_metadata, build_batch_metadata
 from ingestion.utils.bigquery_client import (
-    BigQueryConfigurationError,
     BigQueryWriteResult,
     WriteMode,
     create_bigquery_client,
@@ -29,10 +30,13 @@ from ingestion.utils.date_range import (
     validate_date_range,
 )
 from ingestion.utils.runtime_config import (
+    CLI_HANDLED_EXCEPTIONS,
     configure_google_application_credentials,
     configure_logging_from_env,
+    log_cli_failure,
     require_cli_value,
 )
+from ingestion.utils.http import build_retry_session
 
 logger = logging.getLogger(__name__)
 
@@ -262,46 +266,45 @@ def fetch_daily_weather(
     if config.timezone_offset:
         params["tz"] = config.timezone_offset
 
-    request_session = session or requests.Session()
-
-    try:
-        response = request_session.get(
-            OPENWEATHER_DAILY_SUMMARY_URL,
-            params=params,
-            timeout=timeout_seconds,
-        )
-        response.raise_for_status()
-        record = response.json()
-    except requests.Timeout:
-        logger.error(
-            "OpenWeather daily request timed out weather_date=%s location_key=%s",
-            weather_date,
-            config.location_key,
-        )
-        raise
-    except requests.HTTPError as exc:
-        status_code = getattr(exc.response, "status_code", None)
-        logger.error(
-            "OpenWeather daily request failed weather_date=%s location_key=%s "
-            "status=%s",
-            weather_date,
-            config.location_key,
-            status_code,
-        )
-        raise
-    except requests.RequestException:
-        logger.error(
-            "OpenWeather daily request errored weather_date=%s location_key=%s",
-            weather_date,
-            config.location_key,
-        )
-        raise
-    except ValueError as exc:
-        msg = (
-            "OpenWeather daily response must be valid JSON "
-            f"weather_date={weather_date} location_key={config.location_key}"
-        )
-        raise ValueError(msg) from exc
+    with _managed_requests_session(session) as request_session:
+        try:
+            response = request_session.get(
+                OPENWEATHER_DAILY_SUMMARY_URL,
+                params=params,
+                timeout=timeout_seconds,
+            )
+            response.raise_for_status()
+            record = response.json()
+        except requests.Timeout:
+            logger.error(
+                "OpenWeather daily request timed out weather_date=%s location_key=%s",
+                weather_date,
+                config.location_key,
+            )
+            raise
+        except requests.HTTPError as exc:
+            status_code = getattr(exc.response, "status_code", None)
+            logger.error(
+                "OpenWeather daily request failed weather_date=%s location_key=%s "
+                "status=%s",
+                weather_date,
+                config.location_key,
+                status_code,
+            )
+            raise
+        except requests.RequestException:
+            logger.error(
+                "OpenWeather daily request errored weather_date=%s location_key=%s",
+                weather_date,
+                config.location_key,
+            )
+            raise
+        except ValueError as exc:
+            msg = (
+                "OpenWeather daily response must be valid JSON "
+                f"weather_date={weather_date} location_key={config.location_key}"
+            )
+            raise ValueError(msg) from exc
 
     if not isinstance(record, dict):
         msg = (
@@ -337,16 +340,15 @@ def fetch_weather_for_date_range(
     """
     validate_date_range(start_date, end_date)
     validate_weather_api_budget(start_date, end_date, config.max_api_calls)
-    request_session = session or requests.Session()
-
-    return [
-        fetch_daily_weather(
-            weather_date,
-            config,
-            session=request_session,
-        )
-        for weather_date in iter_date_range(start_date, end_date)
-    ]
+    with _managed_requests_session(session) as request_session:
+        return [
+            fetch_daily_weather(
+                weather_date,
+                config,
+                session=request_session,
+            )
+            for weather_date in iter_date_range(start_date, end_date)
+        ]
 
 
 def normalize_daily_weather(
@@ -588,9 +590,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             project_id=project_id,
             location=location,
         )
-    except (BigQueryConfigurationError, ValueError, requests.RequestException) as exc:
-        logger.error("Weather daily ingestion failed: %s", exc)
-        return 1
+    except CLI_HANDLED_EXCEPTIONS as exc:
+        return log_cli_failure(logger, "Weather daily ingestion", exc)
 
     return 0
 
@@ -650,6 +651,19 @@ def _nested_value(record: dict[str, object], *path: str) -> object | None:
         current_value = current_value.get(key)
 
     return current_value
+
+
+@contextmanager
+def _managed_requests_session(
+    session: requests.Session | None,
+) -> Iterator[requests.Session]:
+    """Yield a requests session while closing only sessions created here."""
+    if session is not None:
+        yield session
+        return
+
+    with build_retry_session() as managed_session:
+        yield managed_session
 
 
 if __name__ == "__main__":

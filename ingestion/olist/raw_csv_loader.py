@@ -20,15 +20,16 @@ from ingestion.utils.batch_metadata import (
     build_batch_metadata,
 )
 from ingestion.utils.bigquery_client import (
-    BigQueryConfigurationError,
     BigQueryWriteResult,
     WriteMode,
     create_bigquery_client,
     write_dataframe_to_bigquery,
 )
 from ingestion.utils.runtime_config import (
+    CLI_HANDLED_EXCEPTIONS,
     configure_google_application_credentials,
     configure_logging_from_env,
+    log_cli_failure,
     require_cli_value,
 )
 
@@ -214,19 +215,18 @@ def run_olist_loader(
             project_id=project_id,
             location=location,
         )
-    except BigQueryConfigurationError as exc:
-        logger.error("BigQuery configuration validation failed: %s", exc)
-        return 1
+        load_raw_csv(
+            parsed_args.csv_path,
+            spec,
+            table_id=parsed_args.table_id,
+            write_mode=parsed_args.write_mode,
+            client=bigquery_client,
+            project_id=project_id,
+            location=location,
+        )
+    except CLI_HANDLED_EXCEPTIONS as exc:
+        return log_cli_failure(logger, f"Olist {spec.source_name} ingestion", exc)
 
-    load_raw_csv(
-        parsed_args.csv_path,
-        spec,
-        table_id=parsed_args.table_id,
-        write_mode=parsed_args.write_mode,
-        client=bigquery_client,
-        project_id=project_id,
-        location=location,
-    )
     return 0
 
 

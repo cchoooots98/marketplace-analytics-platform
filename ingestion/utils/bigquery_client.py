@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import asdict, dataclass
 from typing import Literal
 
@@ -13,6 +14,7 @@ from google.cloud import bigquery
 logger = logging.getLogger(__name__)
 
 WriteMode = Literal["append", "replace"]
+ATOMIC_SWAP_STAGING_PREFIX = "__dbt_atomic_swap"
 
 
 class BigQueryConfigurationError(RuntimeError):
@@ -123,6 +125,7 @@ def write_dataframe_to_bigquery(
         project_id=project_id,
         location=location,
     )
+    normalized_location = _normalize_optional_text(location, "location")
 
     logger.info(
         "Starting BigQuery DataFrame load table_id=%s write_mode=%s input_rows=%s",
@@ -131,25 +134,34 @@ def write_dataframe_to_bigquery(
         len(dataframe.index),
     )
 
-    # Loading via the official client keeps schema inference and retry behavior
-    # aligned with BigQuery's production load-job API.
-    load_job = bigquery_client.load_table_from_dataframe(
-        dataframe,
-        normalized_table_id,
-        job_config=load_job_config,
-        location=_normalize_optional_text(location, "location"),
-    )
-    load_job.result()
+    if write_mode == "replace":
+        write_result = _write_dataframe_with_atomic_replace(
+            dataframe,
+            normalized_table_id,
+            bigquery_client,
+            normalized_location,
+            load_job_config,
+        )
+    else:
+        # Loading via the official client keeps schema inference and retry
+        # behavior aligned with BigQuery's production load-job API.
+        load_job = bigquery_client.load_table_from_dataframe(
+            dataframe,
+            normalized_table_id,
+            job_config=load_job_config,
+            location=normalized_location,
+        )
+        load_job.result()
 
-    loaded_rows = _get_loaded_rows(load_job, fallback_rows=len(dataframe.index))
-    write_result = BigQueryWriteResult(
-        table_id=normalized_table_id,
-        write_mode=write_mode,
-        job_id=getattr(load_job, "job_id", None),
-        input_rows=len(dataframe.index),
-        input_columns=len(dataframe.columns),
-        loaded_rows=loaded_rows,
-    )
+        loaded_rows = _get_loaded_rows(load_job, fallback_rows=len(dataframe.index))
+        write_result = BigQueryWriteResult(
+            table_id=normalized_table_id,
+            write_mode=write_mode,
+            job_id=getattr(load_job, "job_id", None),
+            input_rows=len(dataframe.index),
+            input_columns=len(dataframe.columns),
+            loaded_rows=loaded_rows,
+        )
 
     logger.info(
         "Completed BigQuery DataFrame load table_id=%s write_mode=%s "
@@ -161,6 +173,70 @@ def write_dataframe_to_bigquery(
     )
 
     return write_result
+
+
+def _write_dataframe_with_atomic_replace(
+    dataframe: pd.DataFrame,
+    table_id: str,
+    client: bigquery.Client,
+    location: str | None,
+    load_job_config: bigquery.LoadJobConfig,
+) -> BigQueryWriteResult:
+    """Publish a replacement table through a staging table and copy job.
+
+    Args:
+        dataframe: Source DataFrame to publish.
+        table_id: Final destination table.
+        client: Configured BigQuery client.
+        location: Optional BigQuery job location.
+        load_job_config: Load configuration for the staging write.
+
+    Returns:
+        Structured summary of the publish operation.
+    """
+    staging_table_id = _build_staging_table_id(table_id)
+    logger.info(
+        "Starting atomic replace publish destination_table_id=%s staging_table_id=%s",
+        table_id,
+        staging_table_id,
+    )
+    copy_job: object | None = None
+    try:
+        staging_load_job = client.load_table_from_dataframe(
+            dataframe,
+            staging_table_id,
+            job_config=load_job_config,
+            location=location,
+        )
+        staging_load_job.result()
+
+        copy_job = client.copy_table(
+            staging_table_id,
+            table_id,
+            job_config=bigquery.CopyJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+            ),
+            location=location,
+        )
+        copy_job.result()
+    finally:
+        try:
+            client.delete_table(staging_table_id, not_found_ok=True)
+        except Exception as cleanup_exc:
+            logger.warning(
+                "Atomic swap staging cleanup failed staging_table_id=%s error=%s",
+                staging_table_id,
+                cleanup_exc,
+            )
+
+    return BigQueryWriteResult(
+        table_id=table_id,
+        write_mode="replace",
+        job_id=getattr(copy_job, "job_id", None),
+        input_rows=len(dataframe.index),
+        input_columns=len(dataframe.columns),
+        loaded_rows=_get_loaded_rows(copy_job, fallback_rows=len(dataframe.index)),
+    )
 
 
 def _build_load_job_config(write_mode: WriteMode) -> bigquery.LoadJobConfig:
@@ -178,6 +254,17 @@ def _build_load_job_config(write_mode: WriteMode) -> bigquery.LoadJobConfig:
     return bigquery.LoadJobConfig(
         write_disposition=write_dispositions[write_mode],
     )
+
+
+def _build_staging_table_id(table_id: str) -> str:
+    """Create a temporary staging table ID for atomic replacement."""
+    table_parts = table_id.split(".")
+    table_name = table_parts[-1]
+    dataset_parts = table_parts[:-1]
+    staging_table_name = (
+        f"{ATOMIC_SWAP_STAGING_PREFIX}_{table_name}_{uuid.uuid4().hex[:12]}"
+    )
+    return ".".join([*dataset_parts, staging_table_name])
 
 
 def _get_loaded_rows(load_job: object, fallback_rows: int) -> int:

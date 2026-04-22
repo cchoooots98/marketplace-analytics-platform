@@ -18,7 +18,6 @@ from google.cloud import bigquery
 
 from ingestion.utils.batch_metadata import add_batch_metadata, build_batch_metadata
 from ingestion.utils.bigquery_client import (
-    BigQueryConfigurationError,
     BigQueryWriteResult,
     WriteMode,
     create_bigquery_client,
@@ -29,10 +28,13 @@ from ingestion.utils.date_range import (
     validate_date_range,
 )
 from ingestion.utils.runtime_config import (
+    CLI_HANDLED_EXCEPTIONS,
     configure_google_application_credentials,
     configure_logging_from_env,
+    log_cli_failure,
     require_cli_value,
 )
+from ingestion.utils.http import build_retry_session
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +60,7 @@ def fetch_public_holidays(
         year: Calendar year to fetch.
         country_code: ISO 3166-1 alpha-2 country code such as "BR".
         session: Optional caller-owned requests session for connection reuse and tests.
-            When omitted, uses requests.get for a one-shot call without connection pooling.
+            When omitted, uses a retry-enabled managed session.
         timeout_seconds: HTTP timeout in seconds.
 
     Returns:
@@ -75,45 +77,44 @@ def fetch_public_holidays(
         year=year,
         country_code=normalized_country_code,
     )
-    request_get = session.get if session is not None else requests.get
-
-    try:
-        response = request_get(api_url, timeout=timeout_seconds)
-        response.raise_for_status()
-        records = response.json()
-    except requests.Timeout:
-        logger.error(
-            "Nager.Date holiday request timed out year=%s country_code=%s url=%s",
-            year,
-            normalized_country_code,
-            api_url,
-        )
-        raise
-    except requests.HTTPError as exc:
-        status_code = getattr(exc.response, "status_code", None)
-        logger.error(
-            "Nager.Date holiday request failed year=%s country_code=%s "
-            "status=%s url=%s",
-            year,
-            normalized_country_code,
-            status_code,
-            api_url,
-        )
-        raise
-    except requests.RequestException:
-        logger.error(
-            "Nager.Date holiday request errored year=%s country_code=%s url=%s",
-            year,
-            normalized_country_code,
-            api_url,
-        )
-        raise
-    except ValueError as exc:
-        msg = (
-            "Nager.Date holiday response must be valid JSON "
-            f"year={year} country_code={normalized_country_code}"
-        )
-        raise ValueError(msg) from exc
+    with _managed_requests_session(session) as request_session:
+        try:
+            response = request_session.get(api_url, timeout=timeout_seconds)
+            response.raise_for_status()
+            records = response.json()
+        except requests.Timeout:
+            logger.error(
+                "Nager.Date holiday request timed out year=%s country_code=%s url=%s",
+                year,
+                normalized_country_code,
+                api_url,
+            )
+            raise
+        except requests.HTTPError as exc:
+            status_code = getattr(exc.response, "status_code", None)
+            logger.error(
+                "Nager.Date holiday request failed year=%s country_code=%s "
+                "status=%s url=%s",
+                year,
+                normalized_country_code,
+                status_code,
+                api_url,
+            )
+            raise
+        except requests.RequestException:
+            logger.error(
+                "Nager.Date holiday request errored year=%s country_code=%s url=%s",
+                year,
+                normalized_country_code,
+                api_url,
+            )
+            raise
+        except ValueError as exc:
+            msg = (
+                "Nager.Date holiday response must be valid JSON "
+                f"year={year} country_code={normalized_country_code}"
+            )
+            raise ValueError(msg) from exc
 
     if not isinstance(records, list):
         msg = (
@@ -267,8 +268,7 @@ def load_holidays(
         raise ValueError(msg)
 
     source_file_name = (
-        f"nager_public_holidays_{normalized_country_code}_"
-        f"{start_date}_{end_date}.json"
+        f"nager_public_holidays_{normalized_country_code}_{start_date}_{end_date}.json"
     )
     metadata = build_batch_metadata(source_file_name)
     holidays_with_metadata = add_batch_metadata(holidays_dataframe, metadata)
@@ -354,9 +354,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             project_id=project_id,
             location=location,
         )
-    except (BigQueryConfigurationError, ValueError, requests.RequestException) as exc:
-        logger.error("Holiday ingestion failed: %s", exc)
-        return 1
+    except CLI_HANDLED_EXCEPTIONS as exc:
+        return log_cli_failure(logger, "Holiday ingestion", exc)
 
     return 0
 
@@ -398,7 +397,7 @@ def _managed_requests_session(
         yield session
         return
 
-    with requests.Session() as managed_session:
+    with build_retry_session() as managed_session:
         yield managed_session
 
 
