@@ -68,32 +68,30 @@ actual as (
 
 )
 
-select
-    coalesce(expected.seller_id, actual.seller_id) as seller_id,
-    coalesce(expected.calendar_date, actual.calendar_date) as calendar_date,
-    expected.orders_count as expected_orders_count,
-    actual.orders_count as actual_orders_count,
-    expected.gmv as expected_gmv,
-    actual.gmv as actual_gmv,
-    expected.non_cancelled_orders_count as expected_non_cancelled_orders_count,
-    actual.non_cancelled_orders_count as actual_non_cancelled_orders_count,
-    expected.operational_defect_orders_count as expected_operational_defect_orders_count,
-    actual.operational_defect_orders_count as actual_operational_defect_orders_count
-from expected
-full outer join actual
-    on expected.seller_id = actual.seller_id
-    and expected.calendar_date = actual.calendar_date
-where
-    expected.seller_id is null
-    or actual.seller_id is null
-    or expected.orders_count != actual.orders_count
-    or expected.items_count != actual.items_count
-    or abs(expected.items_value - actual.items_value) > 0.01
-    or abs(expected.freight_total - actual.freight_total) > 0.01
-    or abs(expected.gmv - actual.gmv) > 0.01
-    or expected.non_cancelled_orders_count != actual.non_cancelled_orders_count
-    or expected.delivered_orders_count != actual.delivered_orders_count
-    or expected.cancelled_orders_count != actual.cancelled_orders_count
-    or expected.late_orders_count != actual.late_orders_count
-    or expected.operational_defect_orders_count
-        != actual.operational_defect_orders_count
+{{ reconciliation_mismatch_rows(
+    'expected',
+    'actual',
+    ['seller_id', 'calendar_date'],
+    exact_columns=[
+        'orders_count',
+        'items_count',
+        'non_cancelled_orders_count',
+        'delivered_orders_count',
+        'cancelled_orders_count',
+        'late_orders_count',
+        'operational_defect_orders_count'
+    ],
+    required_amount_columns=[
+        'items_value',
+        'freight_total',
+        'gmv'
+    ],
+    diagnostic_columns=[
+        'orders_count',
+        'items_value',
+        'freight_total',
+        'gmv',
+        'non_cancelled_orders_count',
+        'operational_defect_orders_count'
+    ]
+) }}

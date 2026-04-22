@@ -1,5 +1,6 @@
--- Invariant test: mart_fulfillment_ops must preserve bucket purity and
--- denominator relationships for operational monitoring.
+-- Invariant test: mart_fulfillment_ops stays specialized because bucket purity
+-- is domain logic, while scalar rate comparisons reuse shared helper macros.
+
 select
     purchase_date,
     customer_state,
@@ -25,19 +26,7 @@ where
     or (
         orders_count - delivered_orders_count - cancelled_orders_count < 0
     )
-    or not (
-        (
-            late_delivery_rate is null
-            and safe_divide(
-                late_orders_count,
-                nullif(delivered_orders_count, 0)
-            ) is null
-        )
-        or abs(
-            late_delivery_rate
-            - safe_divide(
-                late_orders_count,
-                nullif(delivered_orders_count, 0)
-            )
-        ) <= 0.000001
-    )
+    or {{ nullable_rate_mismatch(
+        'late_delivery_rate',
+        'safe_divide(late_orders_count, nullif(delivered_orders_count, 0))'
+    ) }}

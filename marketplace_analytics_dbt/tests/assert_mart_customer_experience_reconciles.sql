@@ -55,21 +55,17 @@ actual as (
 
 )
 
-select
-    coalesce(expected.purchase_date, actual.purchase_date) as purchase_date,
-    coalesce(expected.customer_state, actual.customer_state) as customer_state,
-    coalesce(expected.delivery_delay_bucket, actual.delivery_delay_bucket) as delivery_delay_bucket,
-    expected.orders_count as expected_orders_count,
-    actual.orders_count as actual_orders_count
-from expected
-full outer join actual
-    on expected.purchase_date = actual.purchase_date
-    and expected.customer_state = actual.customer_state
-    and expected.delivery_delay_bucket = actual.delivery_delay_bucket
-where
-    expected.purchase_date is null
-    or actual.purchase_date is null
-    or expected.orders_count != actual.orders_count
-    or expected.reviewed_orders_count != actual.reviewed_orders_count
-    or expected.reviews_count != actual.reviews_count
-    or expected.commented_reviews_count != actual.commented_reviews_count
+{{ reconciliation_mismatch_rows(
+    'expected',
+    'actual',
+    ['purchase_date', 'customer_state', 'delivery_delay_bucket'],
+    exact_columns=[
+        'orders_count',
+        'reviewed_orders_count',
+        'reviews_count',
+        'commented_reviews_count'
+    ],
+    diagnostic_columns=[
+        'orders_count'
+    ]
+) }}

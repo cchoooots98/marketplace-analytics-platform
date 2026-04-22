@@ -1,5 +1,7 @@
--- Weighting test: mart_customer_experience sentiment averages must follow the
--- canonical order-level review contract instead of raw review-row weighting.
+-- Weighting test: this remains a specialized business proof because it checks
+-- order-weighted sentiment semantics, not just relation parity. Scalar
+-- comparisons reuse the shared reconciliation helper macros.
+
 with
 orders_with_experience as (
 
@@ -58,11 +60,11 @@ full outer join actual
 where
     expected.purchase_date is null
     or actual.purchase_date is null
-    or not (
-        (expected.avg_review_score is null and actual.avg_review_score is null)
-        or abs(expected.avg_review_score - actual.avg_review_score) <= 0.000001
-    )
-    or not (
-        (expected.avg_time_to_review_days is null and actual.avg_time_to_review_days is null)
-        or abs(expected.avg_time_to_review_days - actual.avg_time_to_review_days) <= 0.000001
-    )
+    or {{ nullable_rate_mismatch(
+        'expected.avg_review_score',
+        'actual.avg_review_score'
+    ) }}
+    or {{ nullable_rate_mismatch(
+        'expected.avg_time_to_review_days',
+        'actual.avg_time_to_review_days'
+    ) }}

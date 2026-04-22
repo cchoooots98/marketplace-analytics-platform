@@ -62,32 +62,30 @@ actual as (
 
 )
 
-select
-    coalesce(expected.seller_id, actual.seller_id) as seller_id,
-    coalesce(expected.order_id, actual.order_id) as order_id,
-    expected.calendar_date as expected_calendar_date,
-    actual.calendar_date as actual_calendar_date
-from expected
-full outer join actual
-    on expected.seller_id = actual.seller_id
-    and expected.order_id = actual.order_id
-where
-    expected.order_id is null
-    or actual.order_id is null
-    or expected.calendar_date != actual.calendar_date
-    or coalesce(expected.reviews_count, -1) != coalesce(actual.reviews_count, -1)
-    or coalesce(expected.commented_reviews_count, -1)
-        != coalesce(actual.commented_reviews_count, -1)
-    or not (
-        (expected.avg_review_score_for_order is null and actual.avg_review_score_for_order is null)
-        or abs(expected.avg_review_score_for_order - actual.avg_review_score_for_order) <= 0.000001
-    )
-    or not (
-        (expected.avg_time_to_review_days_for_order is null and actual.avg_time_to_review_days_for_order is null)
-        or abs(
-            expected.avg_time_to_review_days_for_order
-            - actual.avg_time_to_review_days_for_order
-        ) <= 0.000001
-    )
-    or expected.is_reviewed_order != actual.is_reviewed_order
-    or expected.is_low_review_order != actual.is_low_review_order
+{{ reconciliation_mismatch_rows(
+    'expected',
+    'actual',
+    ['seller_id', 'order_id'],
+    exact_columns=[
+        'calendar_date',
+        'is_reviewed_order',
+        'is_low_review_order'
+    ],
+    nullable_amount_columns=[
+        'reviews_count',
+        'commented_reviews_count'
+    ],
+    nullable_rate_columns=[
+        'avg_review_score_for_order',
+        'avg_time_to_review_days_for_order'
+    ],
+    diagnostic_columns=[
+        'calendar_date',
+        'reviews_count',
+        'commented_reviews_count',
+        'avg_review_score_for_order',
+        'avg_time_to_review_days_for_order',
+        'is_reviewed_order',
+        'is_low_review_order'
+    ]
+) }}

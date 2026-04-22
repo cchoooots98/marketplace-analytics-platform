@@ -77,30 +77,30 @@ actual as (
 
 )
 
-select
-    coalesce(expected.calendar_date, actual.calendar_date) as calendar_date,
-    expected.orders_count as expected_orders_count,
-    actual.orders_count as actual_orders_count,
-    expected.gmv as expected_gmv,
-    actual.gmv as actual_gmv
-from expected
-full outer join actual
-    on expected.calendar_date = actual.calendar_date
-where
-    expected.calendar_date is null
-    or actual.calendar_date is null
-    or expected.orders_count != actual.orders_count
-    or expected.non_cancelled_orders_count != actual.non_cancelled_orders_count
-    or expected.cancelled_orders_count != actual.cancelled_orders_count
-    or expected.delivered_orders_count != actual.delivered_orders_count
-    or expected.late_orders_count != actual.late_orders_count
-    or expected.new_customers_count != actual.new_customers_count
-    or abs(expected.gmv - actual.gmv) > 0.01
-    or abs(expected.items_value - actual.items_value) > 0.01
-    or abs(expected.freight_total - actual.freight_total) > 0.01
-    or abs(expected.payment_total - actual.payment_total) > 0.01
-    or expected.reviews_count != actual.reviews_count
-    or not (
-        (expected.avg_review_score is null and actual.avg_review_score is null)
-        or abs(expected.avg_review_score - actual.avg_review_score) <= 0.000001
-    )
+{{ reconciliation_mismatch_rows(
+    'expected',
+    'actual',
+    ['calendar_date'],
+    exact_columns=[
+        'orders_count',
+        'non_cancelled_orders_count',
+        'cancelled_orders_count',
+        'delivered_orders_count',
+        'late_orders_count',
+        'new_customers_count',
+        'reviews_count'
+    ],
+    required_amount_columns=[
+        'gmv',
+        'items_value',
+        'freight_total',
+        'payment_total'
+    ],
+    nullable_rate_columns=[
+        'avg_review_score'
+    ],
+    diagnostic_columns=[
+        'orders_count',
+        'gmv'
+    ]
+) }}

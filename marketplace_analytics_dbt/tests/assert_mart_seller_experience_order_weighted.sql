@@ -2,6 +2,10 @@
 -- order-level review contract on attributable orders and must not collapse to
 -- item-weighted or raw review-row-weighted averages when those alternatives
 -- differ from the contract.
+-- This remains a specialized business proof because it guards against
+-- alternative but wrong weighting strategies. Shared helper macros are used
+-- for the repeated nullable floating-point comparisons.
+
 with seller_cardinality_by_order as (
 
     select
@@ -105,99 +109,51 @@ left join review_row_weighted as rrw
 where
     expected.seller_id is null
     or actual.seller_id is null
-    or not (
-        (expected.expected_avg_review_score is null and actual.avg_review_score is null)
-        or abs(expected.expected_avg_review_score - actual.avg_review_score) <= 0.000001
-    )
-    or not (
-        (
-            expected.expected_avg_time_to_review_days is null
-            and actual.avg_time_to_review_days is null
-        )
-        or abs(
-            expected.expected_avg_time_to_review_days
-            - actual.avg_time_to_review_days
-        ) <= 0.000001
+    or {{ nullable_rate_mismatch(
+        'expected.expected_avg_review_score',
+        'actual.avg_review_score'
+    ) }}
+    or {{ nullable_rate_mismatch(
+        'expected.expected_avg_time_to_review_days',
+        'actual.avg_time_to_review_days'
+    ) }}
+    or (
+        {{ nullable_rate_mismatch(
+            'iw.item_weighted_avg_review_score',
+            'expected.expected_avg_review_score'
+        ) }}
+        and not {{ nullable_rate_mismatch(
+            'iw.item_weighted_avg_review_score',
+            'actual.avg_review_score'
+        ) }}
     )
     or (
-        not (
-            (
-                iw.item_weighted_avg_review_score is null
-                and expected.expected_avg_review_score is null
-            )
-            or abs(
-                iw.item_weighted_avg_review_score
-                - expected.expected_avg_review_score
-            ) <= 0.000001
-        )
-        and (
-            (iw.item_weighted_avg_review_score is null and actual.avg_review_score is null)
-            or abs(iw.item_weighted_avg_review_score - actual.avg_review_score) <= 0.000001
-        )
+        {{ nullable_rate_mismatch(
+            'rrw.review_row_weighted_avg_review_score',
+            'expected.expected_avg_review_score'
+        ) }}
+        and not {{ nullable_rate_mismatch(
+            'rrw.review_row_weighted_avg_review_score',
+            'actual.avg_review_score'
+        ) }}
     )
     or (
-        not (
-            (
-                rrw.review_row_weighted_avg_review_score is null
-                and expected.expected_avg_review_score is null
-            )
-            or abs(
-                rrw.review_row_weighted_avg_review_score
-                - expected.expected_avg_review_score
-            ) <= 0.000001
-        )
-        and (
-            (
-                rrw.review_row_weighted_avg_review_score is null
-                and actual.avg_review_score is null
-            )
-            or abs(
-                rrw.review_row_weighted_avg_review_score
-                - actual.avg_review_score
-            ) <= 0.000001
-        )
+        {{ nullable_rate_mismatch(
+            'iw.item_weighted_avg_time_to_review_days',
+            'expected.expected_avg_time_to_review_days'
+        ) }}
+        and not {{ nullable_rate_mismatch(
+            'iw.item_weighted_avg_time_to_review_days',
+            'actual.avg_time_to_review_days'
+        ) }}
     )
     or (
-        not (
-            (
-                iw.item_weighted_avg_time_to_review_days is null
-                and expected.expected_avg_time_to_review_days is null
-            )
-            or abs(
-                iw.item_weighted_avg_time_to_review_days
-                - expected.expected_avg_time_to_review_days
-            ) <= 0.000001
-        )
-        and (
-            (
-                iw.item_weighted_avg_time_to_review_days is null
-                and actual.avg_time_to_review_days is null
-            )
-            or abs(
-                iw.item_weighted_avg_time_to_review_days
-                - actual.avg_time_to_review_days
-            ) <= 0.000001
-        )
-    )
-    or (
-        not (
-            (
-                rrw.review_row_weighted_avg_time_to_review_days is null
-                and expected.expected_avg_time_to_review_days is null
-            )
-            or abs(
-                rrw.review_row_weighted_avg_time_to_review_days
-                - expected.expected_avg_time_to_review_days
-            ) <= 0.000001
-        )
-        and (
-            (
-                rrw.review_row_weighted_avg_time_to_review_days is null
-                and actual.avg_time_to_review_days is null
-            )
-            or abs(
-                rrw.review_row_weighted_avg_time_to_review_days
-                - actual.avg_time_to_review_days
-            ) <= 0.000001
-        )
+        {{ nullable_rate_mismatch(
+            'rrw.review_row_weighted_avg_time_to_review_days',
+            'expected.expected_avg_time_to_review_days'
+        ) }}
+        and not {{ nullable_rate_mismatch(
+            'rrw.review_row_weighted_avg_time_to_review_days',
+            'actual.avg_time_to_review_days'
+        ) }}
     )
