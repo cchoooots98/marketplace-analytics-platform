@@ -12,8 +12,11 @@ models:
       the business-customer foreign key resolved by
       int_customer_order_sequence. Missing sequence rows must fail the contract
       rather than silently falling back to staging. Materialized incrementally
-      with a merge strategy on order_id and a 30-day lookback window against
-      order_purchased_at_utc. Partitioned by purchase_date and clustered by
+      with a merge strategy on order_id and a configurable business-SLA
+      lookback window against order_purchased_at_utc. The default replay
+      window is {{ var('fact_orders_incremental_lookback_days', 90) }} days
+      because Olist does not expose a trustworthy row-level updated_at
+      watermark. Partitioned by purchase_date and clustered by
       customer_unique_id plus order_status for BI pruning.
     config:
       materialized: incremental
@@ -208,6 +211,9 @@ models:
       Line-item order fact. Grain: one row per (order_id, order_item_id).
       Conformed order context is inherited from fact_orders so downstream marts
       do not re-resolve customer identity, order-time geography, or SLA flags.
+      Seller and product attributes remain current-state by design in V1;
+      historical master-data versions are tracked in snapshots instead of
+      being copied onto each line item.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -273,7 +279,7 @@ models:
                 to: ref('dim_product')
                 field: product_id
       - name: product_category_name
-        description: "Product category. Nullable when product has no category."
+        description: "Current-state product category from stg_products. Nullable when product has no category."
       - name: order_status
         description: "Order lifecycle status from the order header."
         data_tests:

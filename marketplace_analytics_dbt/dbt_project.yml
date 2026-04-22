@@ -23,6 +23,15 @@ vars:
   # value count as low reviewed on the attributable seller-order subset. 2 is
   # the common detractor band on a 1..5 scale.
   low_review_score_threshold: 2
+  # Shared currency-safe epsilon for order-value, mart, and line-item
+  # reconciliation tests. Keeping this in vars avoids SQL/test/doc drift.
+  reconciliation_amount_tolerance: 0.01
+  # Shared floating-point epsilon for rate and average comparisons in dbt
+  # tests. Keeping this in vars avoids duplicated literal thresholds.
+  reconciliation_rate_tolerance: 0.000001
+  # fact_orders uses a business-SLA replay window because Olist does not expose
+  # a trustworthy row-level updated_at watermark for precise CDC-style pruning.
+  fact_orders_incremental_lookback_days: 90
 
 models:
   marketplace_analytics_dbt:
@@ -55,3 +64,7 @@ models:
         +tags: ["marts", "fact"]
       aggregates:
         +tags: ["marts", "aggregate"]
+
+snapshots:
+  marketplace_analytics_dbt:
+    +target_schema: "{{ env_var('BQ_SNAPSHOTS_DATASET', 'snapshots') }}"

@@ -71,7 +71,8 @@ final as (
     -- fact_order_items.order_id catches the issue; joining here keeps item rows
     -- aligned to the published order header contract.
     -- LEFT JOIN to products: a missing product is tolerable (category becomes
-    -- NULL) because it does not affect the grain or primary measures.
+    -- NULL) because it does not affect the grain or primary measures. Product
+    -- attributes here are intentionally current-state, not order-time copied.
     select
         oi.order_id,
         oi.order_item_id,

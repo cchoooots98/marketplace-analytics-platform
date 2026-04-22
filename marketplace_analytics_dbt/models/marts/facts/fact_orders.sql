@@ -34,12 +34,12 @@
 -- -> shipped -> delivered), so a given order_id row must be updated in place
 -- rather than appended.
 --
--- Lookback window: 30 days behind the current max purchase timestamp. Merge
--- considers only rows within that window, so late-arriving status changes
--- (e.g. a cancellation 14 days post-purchase) are caught without rescanning
--- the full history. The window is wide enough to cover the long tail of the
--- Olist delivery lifecycle while staying small enough that typical runs
--- touch only a few partitions.
+-- Lookback window: configurable business-SLA window behind the current max
+-- purchase timestamp. Olist does not expose a trustworthy row-level updated_at
+-- watermark for precise CDC pruning, so this model intentionally uses a wide
+-- replay window instead of pretending it can identify exact changed rows.
+-- Default is set by var('fact_orders_incremental_lookback_days'); see
+-- dbt_project.yml for the current value.
 --
 -- Partition pruning: purchase_date is used as the partition key. Merge
 -- touches only the purchase_date partitions within the lookback window, so
@@ -63,6 +63,11 @@
         on_schema_change='sync_all_columns'
     )
 }}
+
+{% set fact_orders_incremental_lookback_days = var(
+    'fact_orders_incremental_lookback_days',
+    90
+) %}
 
 with delivery as (
 
@@ -93,14 +98,14 @@ with delivery as (
     {% if is_incremental() %}
     -- Incremental lookback filter. On first run this WHERE block is skipped,
     -- so the full history is loaded. On subsequent runs we only scan orders
-    -- whose purchase timestamp falls within the last 30 days of the prior
-    -- run's max value, which is wide enough to catch late status changes on
-    -- in-flight orders. The subquery against {{ this }} is evaluated once by
-    -- BigQuery and is effectively free because {{ this }} is partitioned.
+    -- whose purchase timestamp falls within the configured business-SLA
+    -- replay window behind the prior run's max value. This is wider than a
+    -- minimal engineering window because order status can mutate long after
+    -- purchase and the source does not publish a reliable update watermark.
     where order_purchased_at_utc >= (
         select timestamp_sub(
             coalesce(max(order_purchased_at_utc), timestamp('1900-01-01')),
-            interval 30 day
+            interval {{ fact_orders_incremental_lookback_days }} day
         )
         from {{ this }}
     )
