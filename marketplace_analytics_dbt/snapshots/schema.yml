@@ -1,0 +1,90 @@
+version: 2
+
+snapshots:
+  - name: snap_sellers
+    description: >
+      Historical seller master-data snapshot. Grain: one row per seller_id
+      version. Tracks semantic seller attribute changes with dbt SCD metadata.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - seller_id
+          config:
+            where: "dbt_valid_to is null"
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - seller_id
+              - dbt_valid_from
+    columns:
+      - name: seller_id
+        description: "Business key for the seller version."
+        data_tests:
+          - not_null
+      - name: seller_zip_code_prefix
+        description: "Seller postal code prefix for the versioned row."
+      - name: seller_city
+        description: "Seller city for the versioned row."
+      - name: seller_state
+        description: "Seller state for the versioned row."
+      - name: dbt_scd_id
+        description: "dbt-generated identifier for the snapshot version."
+        data_tests:
+          - not_null
+          - unique
+      - name: dbt_valid_from
+        description: "Timestamp when the version became active."
+        data_tests:
+          - not_null
+      - name: dbt_valid_to
+        description: "Timestamp when the version stopped being active; null means current."
+
+  - name: snap_products
+    description: >
+      Historical product master-data snapshot. Grain: one row per product_id
+      version. Tracks semantic product attribute changes with dbt SCD metadata.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - product_id
+          config:
+            where: "dbt_valid_to is null"
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - product_id
+              - dbt_valid_from
+    columns:
+      - name: product_id
+        description: "Business key for the product version."
+        data_tests:
+          - not_null
+      - name: product_category_name
+        description: "Product category for the versioned row."
+      - name: product_name_length
+        description: "Product name length for the versioned row."
+      - name: product_description_length
+        description: "Product description length for the versioned row."
+      - name: product_photos_count
+        description: "Product photo count for the versioned row."
+      - name: product_weight_g
+        description: "Product weight for the versioned row."
+      - name: product_length_cm
+        description: "Product length for the versioned row."
+      - name: product_height_cm
+        description: "Product height for the versioned row."
+      - name: product_width_cm
+        description: "Product width for the versioned row."
+      - name: dbt_scd_id
+        description: "dbt-generated identifier for the snapshot version."
+        data_tests:
+          - not_null
+          - unique
+      - name: dbt_valid_from
+        description: "Timestamp when the version became active."
+        data_tests:
+          - not_null
+      - name: dbt_valid_to
+        description: "Timestamp when the version stopped being active; null means current."
