@@ -1,0 +1,98 @@
+name: dbt_runtime_checks
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *"
+
+jobs:
+  runtime-checks:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: marketplace_analytics_dbt
+
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      BIGQUERY_LOCATION: ${{ secrets.BIGQUERY_LOCATION }}
+      BQ_RAW_OLIST_DATASET: ${{ secrets.BQ_RAW_OLIST_DATASET }}
+      BQ_RAW_EXT_DATASET: ${{ secrets.BQ_RAW_EXT_DATASET }}
+      BQ_STAGING_DATASET: ${{ secrets.BQ_STAGING_DATASET }}
+      BQ_INTERMEDIATE_DATASET: ${{ secrets.BQ_INTERMEDIATE_DATASET }}
+      BQ_MARTS_DATASET: ${{ secrets.BQ_MARTS_DATASET }}
+      BQ_SNAPSHOTS_DATASET: ${{ secrets.BQ_SNAPSHOTS_DATASET }}
+      GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcp-service-account.json
+
+    steps:
+      - name: Check runtime configuration
+        id: config
+        run: |
+          if [ -z "${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}" ] || [ -z "${GCP_PROJECT_ID}" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping scheduled runtime checks because required BigQuery secrets are not configured."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository
+        if: steps.config.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: steps.config.outputs.enabled == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install base dependencies
+        if: steps.config.outputs.enabled == 'true'
+        run: pip install -r ../requirements.txt
+
+      - name: Write service account key
+        if: steps.config.outputs.enabled == 'true'
+        run: |
+          cat <<'EOF' > "${GOOGLE_APPLICATION_CREDENTIALS}"
+          ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+          EOF
+
+      - name: Create dbt profile
+        if: steps.config.outputs.enabled == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/dbt-profile"
+          cat <<'EOF' > "$RUNNER_TEMP/dbt-profile/profiles.yml"
+          marketplace_analytics_dbt:
+            target: runtime
+            outputs:
+              runtime:
+                type: bigquery
+                method: service-account
+                keyfile: {{ env_var('GOOGLE_APPLICATION_CREDENTIALS') }}
+                project: {{ env_var('GCP_PROJECT_ID') }}
+                dataset: {{ env_var('BQ_STAGING_DATASET', 'staging') }}
+                threads: 4
+                location: {{ env_var('BIGQUERY_LOCATION', 'EU') }}
+                priority: interactive
+          EOF
+
+      - name: Install dbt packages
+        if: steps.config.outputs.enabled == 'true'
+        run: dbt deps --profiles-dir "$RUNNER_TEMP/dbt-profile" --target runtime
+
+      - name: Run source freshness
+        if: steps.config.outputs.enabled == 'true'
+        run: dbt source freshness --profiles-dir "$RUNNER_TEMP/dbt-profile" --target runtime --target-path target_runtime
+
+      - name: Run snapshots
+        if: steps.config.outputs.enabled == 'true'
+        run: dbt snapshot --select snap_sellers snap_products --profiles-dir "$RUNNER_TEMP/dbt-profile" --target runtime --target-path target_runtime
+
+      - name: Run runtime dbt tests
+        if: steps.config.outputs.enabled == 'true'
+        run: >
+          dbt test
+          --profiles-dir "$RUNNER_TEMP/dbt-profile"
+          --target runtime
+          --target-path target_runtime
+          --select path:snapshots path:models/marts path:tests
