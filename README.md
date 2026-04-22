@@ -5,9 +5,10 @@ project for a marketplace business. It shows how transactional and enrichment
 data can be loaded into BigQuery, modeled with dbt, checked with data quality
 rules, and served to executive and operations dashboards.
 
-This repository is currently in the foundation stage. The target architecture is
-defined, the dbt project is initialized, and the documentation now separates
-what exists today from what will be built next.
+This repository is currently in the reliability-and-contracts phase. Unified
+ingestion, warehouse modeling, snapshots, freshness checks, and mart contracts
+are implemented. The remaining planned surface area is orchestration and BI
+serving.
 
 ## Business Problem
 
@@ -28,14 +29,16 @@ business questions -> ingestion -> warehouse modeling -> data quality
 
 | Area | Status | Evidence |
 |---|---|---|
-| Project charter and architecture | In progress | `README.md`, `docs/architecture.md` |
-| Local Python dependency set | Started | `requirements.in`, `requirements.txt` |
-| BigQuery configuration template | Started | `.env.example` |
-| BigQuery connection smoke test | Started | `tests/test_bigquery_connection.py` |
-| dbt project initialization | Started | `marketplace_analytics_dbt/dbt_project.yml` |
-| Ingestion loaders | Planned | `ingestion/` folder exists; modules not implemented yet |
+| Project charter and architecture | Implemented | `README.md`, `docs/architecture.md` |
+| Local Python dependency set | Implemented | `requirements.txt`, `requirements-orchestration.txt`, `tasks.py` |
+| BigQuery configuration template | Implemented | `.env.example` |
+| BigQuery connection smoke test | Implemented | `tests/test_bigquery_connection.py` |
+| dbt project initialization | Implemented | `marketplace_analytics_dbt/dbt_project.yml` |
+| Ingestion loaders | Implemented | `ingestion/main.py`, `ingestion/olist/`, `ingestion/holidays/`, `ingestion/weather/` |
 | dbt staging, intermediate, and marts | Implemented | `marketplace_analytics_dbt/models/` contains staging, intermediate, facts, dimensions, and marts |
-| Airflow orchestration | Planned | `airflow/dags/` folder exists; DAGs not implemented yet |
+| Reliability and history controls | Implemented | source freshness SLAs, snapshots, singular DQ tests, runbook, and ADR updates |
+| Scheduled runtime warehouse checks | Implemented | `.github/workflows/dbt_runtime_checks.yml` runs freshness, snapshots, and dbt tests on a schedule when secrets are configured |
+| Airflow orchestration | Planned | `requirements-orchestration.txt` provides optional dependencies; `airflow/dags/` does not contain DAGs yet |
 | Metabase dashboards | Planned | `dashboards/screenshots/` folder exists |
 | GitHub Actions CI | Implemented | `.github/workflows/dbt_contracts.yml` |
 | dbt exposures and mart contracts | Implemented | `marketplace_analytics_dbt/models/exposures.yml`, mart `schema.yml` files |
@@ -135,26 +138,43 @@ Metric definitions live in
 
 ## Local Setup
 
+The primary developer interface is `python tasks.py <command>`. `make <target>`
+remains available as a thin compatibility wrapper.
+
 1. Create and activate a Python 3.11 virtual environment.
-2. Install dependencies.
+2. Initialize starter folders and your local `.env` file.
+
+```bash
+python tasks.py setup
+```
+
+3. Install the base runtime, dbt, lint, and test dependencies.
+
+```bash
+python tasks.py install
+```
+
+Underlying equivalent:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Copy the environment template and fill in local values.
+4. Install orchestration dependencies only if you want to prototype future
+   Airflow work.
 
 ```bash
-cp .env.example .env
+python tasks.py install-orchestration
 ```
 
-PowerShell equivalent:
+Underlying equivalent:
 
-```powershell
-Copy-Item .env.example .env
+```bash
+pip install -r requirements-orchestration.txt
 ```
 
-4. Run the BigQuery smoke test after credentials are configured.
+5. Fill in local values in `.env`.
+6. Run the BigQuery smoke test after credentials are configured.
 
 ```bash
 pytest tests/test_bigquery_connection.py -q
@@ -164,11 +184,10 @@ pytest tests/test_bigquery_connection.py -q
    into your local dbt profile location and filling values through environment
    variables.
 
-6. Validate dbt configuration once the profile exists.
+7. Validate dbt configuration once the profile exists.
 
 ```bash
-cd marketplace_analytics_dbt
-dbt debug
+python tasks.py dbt-debug
 ```
 
 ## Documentation Map
@@ -176,13 +195,60 @@ dbt debug
 | Document | Purpose |
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | Target architecture, diagrams, boundaries, and roadmap |
-| [`docs/data_contracts.md`](docs/data_contracts.md) | Planned table grains, keys, and data quality contracts |
+| [`docs/data_contracts.md`](docs/data_contracts.md) | Active table grains, keys, and data quality contracts |
 | [`docs/metric_definitions.md`](docs/metric_definitions.md) | Canonical KPI formulas and reporting rules |
 | [`docs/operations_runbook.md`](docs/operations_runbook.md) | Setup, run order, rerun strategy, and troubleshooting |
 | [`docs/decisions.md`](docs/decisions.md) | Architecture decisions and trade-offs |
 | [`docs/dashboard_specs.md`](docs/dashboard_specs.md) | Dashboard users, charts, and mart dependencies |
-| [`docs/interview_notes.md`](docs/interview_notes.md) | Interview-ready explanation and Q&A |
-| [`docs/resume_bullets.md`](docs/resume_bullets.md) | Resume bullets for the finished project |
+
+Interview notes and resume bullets remain part of the portfolio-polish roadmap,
+but they are not committed repository artifacts yet.
+
+## Data Quality Strategy
+
+- Use dbt generic schema tests as the first contract layer for keys, ranges,
+  accepted values, and relationships.
+- Use singular tests for cross-column and cross-model invariants such as
+  delivery timestamp integrity and order-grain payment reconciliation.
+- Keep KPI logic in marts and reconciliation logic in tests so dashboards do
+  not silently redefine business metrics.
+- Treat optional enrichment as nullable, but fail fast on broken transactional
+  keys or contract-defining timestamps.
+
+## Freshness Strategy
+
+- Source freshness is measured from `ingested_at_utc`, which is the warehouse
+  arrival timestamp added by ingestion.
+- Runtime operating SLAs use `warn_after = source SLA` and
+  `error_after = 2x SLA` for supported transactional and enrichment sources.
+- Current freshness contracts:
+  - `orders`: warn at 24h, error at 48h
+  - `order_items`: warn at 24h, error at 48h
+  - `order_payments`: warn at 24h, error at 48h
+  - `order_reviews`: warn at 48h, error at 96h
+  - `holidays`: warn at 30d, error at 60d
+  - `weather_daily`: warn at 48h, error at 96h
+- Pull-request GitHub Actions CI remains parse-only, so freshness is not run in
+  standard PR automation.
+- A separate scheduled GitHub Actions workflow can run warehouse-backed
+  freshness and dbt tests once credentials are configured in repository
+  secrets.
+
+## How To Troubleshoot Failures
+
+- Freshness failure: check `max(ingested_at_utc)` in the affected raw source,
+  then inspect ingestion logs and confirm the upstream loader actually ran.
+- Snapshot anomaly: confirm the source row really changed on tracked business
+  attributes, then verify the snapshot `unique_key` and `check_cols` exclude
+  batch-noise fields.
+- If seller or product attributes appear historically inconsistent in marts,
+  confirm whether the question expects current-state semantics or snapshot
+  history. In V1, line-item facts intentionally keep seller/product attributes
+  current-state and reserve history tracking for snapshot tables.
+- Payment reconciliation failure: inspect `int_order_value` aggregation grain
+  first; fan-out between items and payments is the most likely root cause.
+- Delivered-timestamp failure: inspect `stg_orders` timestamp casts and source
+  order status semantics before touching downstream marts.
 
 ## Roadmap
 
@@ -191,7 +257,7 @@ dbt debug
 | Foundation | Project scope, environment, dbt initialization, architecture docs | README, architecture, env template, dbt debug path |
 | Ingestion | Load Olist, holiday, and weather data into raw datasets | Idempotent loaders, batch metadata, logging, tests |
 | dbt modeling | Build staging, intermediate, facts, dimensions, and marts | Grain documented, schema tests, custom tests, dbt docs |
-| Reliability | Add freshness, snapshots, runbook, and CI | dbt freshness, snapshot demo, GitHub Actions checks |
+| Reliability and history | Operate freshness, snapshots, runbook, and CI contracts | freshness SLAs, snapshot demo, troubleshooting docs, GitHub Actions parse checks, scheduled runtime checks |
 | Serving | Build Metabase dashboards from marts only | Dashboard screenshots and field mapping |
 | Portfolio polish | Freeze interview version | architecture image, dbt lineage image, dashboard screenshots, resume bullets |
 

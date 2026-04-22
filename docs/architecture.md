@@ -149,6 +149,7 @@ flowchart LR
 | Conformed dimensions | `dim_*` models are reusable contracts and not merely "last-mile" dashboard tables |
 | Canonical customer identity | `dim_customer` grain is `customer_unique_id`, not source `customer_id` |
 | Historical customer geography | Facts carry `customer_*_at_order` snapshots so historical orders stay historically accurate |
+| Seller and product semantics | `fact_order_items` uses current-state seller/product attributes intentionally; history is available through snapshots |
 | Conformed facts | Facts publish governed foreign keys and shared business context once |
 | Governed marts | `mart_exec_daily`, `mart_seller_performance`, `mart_seller_experience`, `mart_fulfillment_ops`, and `mart_customer_experience` are the approved BI contracts |
 | Split seller subject areas | Seller commercial/operational metrics and seller experience metrics are separate contracts |
@@ -194,6 +195,7 @@ flowchart TB
 | Attribution integrity | Seller experience includes only single-seller orders |
 | Reconciliation | Executive, seller, fulfillment, and customer-experience marts reconcile to their upstream facts or reusable intermediates |
 | Published-shape contract | BI-facing marts enforce schema with dbt model contracts and dashboards are declared as dbt exposures |
+| Runtime operations | Scheduled warehouse-backed freshness and dbt tests can run separately from parse-only CI |
 
 ## 8. Architecture Principles
 

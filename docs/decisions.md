@@ -119,9 +119,9 @@ decision explains the trade-off, not just the selected implementation.
 |---|---|
 | Status | Accepted |
 | Context | Order facts grow over time and order status changes across the lifecycle |
-| Decision | Materialize `fact_orders` incrementally with merge on `order_id`, partition by `purchase_date`, and cluster by `customer_unique_id`, `order_status` |
-| Why | This demonstrates a production-style upsert pattern and avoids rescanning the full order history on every run |
-| Trade-off | Historical logic changes still require a full refresh to recompute older rows |
+| Decision | Materialize `fact_orders` incrementally with merge on `order_id`, partition by `purchase_date`, cluster by `customer_unique_id`, `order_status`, and replay a 90-day business-SLA lookback window by default |
+| Why | Olist does not expose a trustworthy row-level updated_at watermark, so a wide replay window is the honest enterprise compromise for catching late lifecycle changes |
+| Trade-off | The model scans more history than a true CDC watermark would, and historical logic changes still require a full refresh |
 
 ## ADR 013: Publish seller experience only on the attributable order subset
 
@@ -142,3 +142,53 @@ decision explains the trade-off, not just the selected implementation.
 | Decision | Publish `int_order_review_metrics` as the only canonical order-grain review aggregation contract |
 | Why | Customer-experience and seller-experience models now share one order-weighted review definition instead of duplicating aggregation logic |
 | Trade-off | Downstream models must depend on one more intermediate, but the semantic clarity is worth the extra node |
+
+## ADR 015: Use runtime freshness SLAs with warn-at-SLA and fail-at-2x-SLA
+
+| Field | Decision |
+|---|---|
+| Status | Accepted |
+| Context | The project needs source observability, but freshness checks run against the warehouse and should not be confused with parse-only CI |
+| Decision | Use `ingested_at_utc` as the source freshness timestamp, warn at the stated SLA, and fail at 2x the SLA for supported transactional and enrichment sources |
+| Why | This matches a common enterprise operating pattern: operators see early degradation before the source becomes truly stale |
+| Trade-off | Freshness remains a runtime control in a configured environment; pull-request CI still cannot prove data recency. Static master-data backfills (`customers`, `sellers`, `products`, `geolocation`) intentionally do not publish freshness SLAs in V1. |
+
+## ADR 016: Track seller and product history with check-based snapshots
+
+| Field | Decision |
+|---|---|
+| Status | Accepted |
+| Context | Olist seller and product sources do not provide a trustworthy business `updated_at`, but the platform still needs a credible history-tracking story |
+| Decision | Use dbt snapshots with `check` strategy on cleaned staging models `stg_sellers` and `stg_products` |
+| Why | This demonstrates SCD2-style historical thinking while tracking only semantic master-data changes instead of raw batch noise |
+| Trade-off | Snapshot change detection must be curated carefully; adding noisy columns to `check_cols` would create false history versions |
+
+## ADR 017: Keep domain constraints in generic tests and reserve singular tests for business invariants
+
+| Field | Decision |
+|---|---|
+| Status | Accepted |
+| Context | The project already uses generic dbt tests for review-score and payment-value domains, and duplicating them as singular tests would create two competing contract definitions |
+| Decision | Keep single-column domain rules in generic tests and add singular tests only for cross-column or cross-model invariants such as delivery timestamp integrity and payment reconciliation |
+| Why | This preserves one authoritative place for column-level contracts while still adding higher-signal custom coverage where generic tests are insufficient |
+| Trade-off | Some requested "custom tests" remain implemented as generic tests, so documentation must explain the distinction clearly |
+
+## ADR 018: Keep seller and product attributes current-state in line-item marts
+
+| Field | Decision |
+|---|---|
+| Status | Accepted |
+| Context | Customer geography is copied onto facts at order time, but seller and product attributes could either be copied as order-time snapshots or left as current-state joins |
+| Decision | Keep seller and product attributes current-state in `fact_order_items` and track their history in snapshots instead of copying them onto every order item row |
+| Why | This keeps the line-item fact slimmer and semantically honest for V1 while still preserving a governed history path for master-data analysis |
+| Trade-off | Historical seller/product attribute analysis requires an explicit join to snapshots; marts should not imply those attributes are frozen at order time |
+
+## ADR 019: Run warehouse-backed freshness and dbt tests on a schedule
+
+| Field | Decision |
+|---|---|
+| Status | Accepted |
+| Context | Parse-only CI proves project structure, but it does not turn freshness SLAs or dbt tests into an actual operating alarm |
+| Decision | Add a scheduled GitHub Actions workflow for `dbt source freshness`, `dbt snapshot`, and dbt tests when runtime secrets are configured |
+| Why | This makes the documented SLA and DQ contracts observable in a recurring runtime environment instead of leaving them as manual-only checks |
+| Trade-off | The scheduled workflow depends on repository secrets and warehouse access, so it is more operationally coupled than parse-only CI |
