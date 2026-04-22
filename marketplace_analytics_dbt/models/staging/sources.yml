@@ -18,9 +18,12 @@ sources:
         notes: >
           Raw Olist tables are static public-dataset backfills. Business logic
           belongs in staging, intermediate, and marts models. Freshness
-          thresholds below document the intended production SLA even though CI
-          stays parse-only and does not execute warehouse-backed freshness
-          checks.
+          thresholds below define the runtime operating SLA for supported
+          transactional sources. Pull-request CI remains parse-only, while the
+          scheduled runtime workflow can execute warehouse-backed freshness
+          checks. Static master-data backfills (`customers`, `sellers`,
+          `products`, `geolocation`) intentionally omit freshness configs in
+          V1.
 
     tables:
       - name: customers
@@ -112,6 +115,9 @@ sources:
             warn_after:
               count: 24
               period: hour
+            error_after:
+              count: 48
+              period: hour
         data_tests:
           - dbt_utils.unique_combination_of_columns:
               arguments:
@@ -197,6 +203,9 @@ sources:
             warn_after:
               count: 24
               period: hour
+            error_after:
+              count: 48
+              period: hour
         data_tests:
           - dbt_utils.unique_combination_of_columns:
               arguments:
@@ -274,6 +283,9 @@ sources:
             warn_after:
               count: 48
               period: hour
+            error_after:
+              count: 96
+              period: hour
         data_tests:
           - dbt_utils.unique_combination_of_columns:
               arguments:
@@ -340,6 +352,9 @@ sources:
           freshness:
             warn_after:
               count: 24
+              period: hour
+            error_after:
+              count: 48
               period: hour
         columns:
           - name: order_id
@@ -544,8 +559,9 @@ sources:
         notes: >
           External enrichment is loaded as a bounded backfill for this portfolio
           project. Freshness thresholds below document the intended production
-          SLA even though CI stays parse-only and does not execute warehouse-
-          backed freshness checks.
+          SLA for runtime operations. Pull-request CI stays parse-only, while
+          the scheduled runtime workflow can execute warehouse-backed
+          freshness checks.
 
     tables:
       - name: holidays
@@ -556,6 +572,9 @@ sources:
           freshness:
             warn_after:
               count: 30
+              period: day
+            error_after:
+              count: 60
               period: day
         data_tests:
           - dbt_utils.unique_combination_of_columns:
@@ -619,6 +638,9 @@ sources:
           freshness:
             warn_after:
               count: 48
+              period: hour
+            error_after:
+              count: 96
               period: hour
         data_tests:
           - dbt_utils.unique_combination_of_columns:
