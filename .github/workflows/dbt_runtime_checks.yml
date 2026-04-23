@@ -25,6 +25,9 @@ jobs:
       BQ_SNAPSHOTS_DATASET: ${{ secrets.BQ_SNAPSHOTS_DATASET }}
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Check runtime configuration
         id: config
         run: |
@@ -34,10 +37,6 @@ jobs:
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Checkout repository
-        if: steps.config.outputs.enabled == 'true'
-        uses: actions/checkout@v4
 
       - name: Set up Python
         if: steps.config.outputs.enabled == 'true'
@@ -105,3 +104,7 @@ jobs:
           name: dbt-runtime-artifacts
           path: |
             marketplace_analytics_dbt/target_runtime/
+
+      - name: Clean local dbt artifacts
+        if: always() && steps.config.outputs.enabled == 'true'
+        run: rm -rf target target_* logs
