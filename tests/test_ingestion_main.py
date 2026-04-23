@@ -286,6 +286,50 @@ def test_main_weather_over_budget_fails_before_api_calls(
     assert exit_code == 1
 
 
+def test_main_fails_fast_when_enrichment_range_is_missing_after_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Validate production guards do not rely on Python asserts.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing collaborators.
+
+    Returns:
+        None.
+    """
+    monkeypatch.setenv("GCP_PROJECT_ID", "marketplace-prod")
+    monkeypatch.setenv("BIGQUERY_LOCATION", "EU")
+    monkeypatch.setenv("OPENWEATHER_API_KEY", "test-key")
+    monkeypatch.setenv("OPENWEATHER_LATITUDE", "-23.5505")
+    monkeypatch.setenv("OPENWEATHER_LONGITUDE", "-46.6333")
+    monkeypatch.setattr(ingestion_main, "load_dotenv", lambda: None)
+    monkeypatch.setattr(
+        ingestion_main,
+        "resolve_enrichment_date_range",
+        lambda **_: None,
+    )
+    monkeypatch.setattr(
+        ingestion_main,
+        "validate_weather_api_budget",
+        lambda *_, **__: pytest.fail(
+            "Weather budget validation should not run without a date range"
+        ),
+    )
+
+    exit_code = ingestion_main.main(
+        [
+            "--skip-olist",
+            "--skip-holidays",
+            "--start-date",
+            "2026-01-01",
+            "--end-date",
+            "2026-01-02",
+        ]
+    )
+
+    assert exit_code == 1
+
+
 def test_main_bigquery_config_failure_stops_before_expensive_work(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

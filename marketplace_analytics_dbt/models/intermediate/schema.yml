@@ -71,7 +71,9 @@ models:
       status. Optionally enriched with configured public holiday context from
       dim_date at the purchase date and configured proxy weather context at the
       delivery date. Grain: one row per order_id. The single authoritative
-      delivery reference for all marts.
+      delivery reference for all marts. Calendar enrichment is row-preserving:
+      missing dim_date coverage must fail via explicit tests, not by silently
+      dropping orders from the intermediate contract.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:

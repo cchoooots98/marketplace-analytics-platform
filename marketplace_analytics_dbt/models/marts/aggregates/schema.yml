@@ -9,7 +9,11 @@ models:
       cohort). All rates use the documented denominator conventions and must
       never be recomputed in BI. GMV follows the canonical metric definition:
       item value plus freight for non-cancelled orders. The mart intentionally
-      emits non-empty order dates only.
+      emits non-empty order dates only. Two singular tests intentionally split
+      responsibilities here: assert_mart_exec_daily_covers_order_dates isolates
+      date-grain parity, while assert_mart_exec_daily_reconciles checks
+      conserved measures against the conformed facts. They are complementary,
+      not duplicates.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:

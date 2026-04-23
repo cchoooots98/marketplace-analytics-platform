@@ -1,24 +1,32 @@
 -- Reconciliation test: mart_exec_daily must preserve the executive purchase-
--- date grain and the core conserved order/review measures that feed its KPI
--- formulas. Rate invariants are validated separately.
+-- date grain and the core conserved order/review measures published from the
+-- conformed facts. This is intentionally not framed as a proof that the KPI
+-- business logic is independently correct; it is a conservation check between
+-- governed upstream facts and the mart. Coverage and rate-specific invariants
+-- are validated separately.
 with order_conservation as (
 
     select
         purchase_date as calendar_date,
-        count(*) as orders_count,
-        countif(not is_cancelled) as non_cancelled_orders_count,
-        countif(is_cancelled) as cancelled_orders_count,
-        countif(is_delivered) as delivered_orders_count,
-        countif(is_late) as late_orders_count,
-        countif(is_first_order) as new_customers_count,
+        sum(1) as orders_count,
+        sum(case when is_cancelled then 0 else 1 end) as non_cancelled_orders_count,
+        sum(case when is_cancelled then 1 else 0 end) as cancelled_orders_count,
+        sum(case when is_delivered then 1 else 0 end) as delivered_orders_count,
+        sum(case when is_late then 1 else 0 end) as late_orders_count,
+        sum(case when is_first_order then 1 else 0 end) as new_customers_count,
         sum(case
-            when not is_cancelled
-                then coalesce(order_item_value, 0) + coalesce(order_freight_total, 0)
-            else 0
+            when is_cancelled then 0
+            else coalesce(order_item_value, 0)
+        end) + sum(case
+            when is_cancelled then 0
+            else coalesce(order_freight_total, 0)
         end) as gmv,
-        sum(order_item_value) as items_value,
-        sum(order_freight_total) as freight_total,
-        sum(coalesce(order_payment_total, 0)) as payment_total
+        sum(coalesce(order_item_value, 0)) as items_value,
+        sum(coalesce(order_freight_total, 0)) as freight_total,
+        sum(case
+            when order_payment_total is null then 0
+            else order_payment_total
+        end) as payment_total
     from {{ ref('fact_orders') }}
     group by purchase_date
 

@@ -134,12 +134,15 @@ delivery_flags as (
 
 enriched_with_calendar as (
 
+    -- Preserve every order row even if dim_date coverage regresses. Calendar
+    -- completeness is enforced by dedicated tests, so missing date context
+    -- should fail loudly without silently shrinking the order population.
     select
         df.*,
         dc.is_holiday as is_purchase_on_holiday,
         dc.holiday_name as holiday_name_at_purchase
     from delivery_flags as df
-    inner join date_context as dc
+    left join date_context as dc
         on df.purchase_date = dc.calendar_date
 
 ),

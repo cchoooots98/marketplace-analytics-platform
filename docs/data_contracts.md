@@ -93,8 +93,8 @@ future location-aware modeling. Downstream marts do not consume it in V1.
 
 | Model | Grain | Purpose | Required checks |
 |---|---|---|---|
-| `int_order_value` | One order | Aggregate item value, freight, payment value, and payment count while preserving all order IDs | one row per order, values non-negative, zero item count allowed, payment reconciliation tolerance <= configured `reconciliation_amount_tolerance` (default 0.01) when payment exists |
-| `int_order_delivery` | One order | Calculate delivery flags, cancellation flags, late days, purchase-date holiday context, and delivery-date proxy weather context | late orders have positive late days; non-late orders keep `late_days = NULL`; delivered orders must have actual delivery timestamps |
+| `int_order_value` | One order | Aggregate item value, freight, payment value, and payment count while preserving all order IDs | one row per order, values non-negative, zero item count allowed, published aggregates reconcile back to independently rolled-up staging item and payment rows |
+| `int_order_delivery` | One order | Calculate delivery flags, cancellation flags, late days, purchase-date holiday context, and delivery-date proxy weather context | late orders have positive late days; non-late orders keep `late_days = NULL`; `is_delivered = TRUE` only when `order_status = 'delivered'` and an actual delivery timestamp exists |
 | `int_customer_order_sequence` | One customer-order relationship | Sequence orders by `customer_unique_id` so repeat-customer analysis works on business identity | order number starts at 1 and is unique per physical customer |
 | `int_review_enriched` | One review-order relationship | Connect review score with delivery context, product context, and `delivery_delay_bucket` | review score valid, delivery bucket purity enforced |
 | `int_order_review_metrics` | One order | Publish the canonical order-level review aggregation reused by seller and customer-experience models | one row per order, review counts non-negative, score range stays valid |

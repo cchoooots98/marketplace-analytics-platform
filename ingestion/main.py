@@ -211,6 +211,33 @@ def resolve_enrichment_date_range(
     return start_date, end_date
 
 
+def require_enrichment_date_range(
+    enrichment_date_range: tuple[date, date] | None,
+    *,
+    consumer_name: str,
+) -> tuple[date, date]:
+    """Return a resolved enrichment date range for one downstream consumer.
+
+    Args:
+        enrichment_date_range: Previously resolved enrichment date range.
+        consumer_name: Human-readable downstream consumer for error context.
+
+    Returns:
+        The resolved `(start_date, end_date)` tuple.
+
+    Raises:
+        ValueError: If the enrichment date range is unexpectedly missing.
+    """
+    if enrichment_date_range is None:
+        msg = (
+            "Enrichment date range is required before running "
+            f"{consumer_name}. This indicates a CLI orchestration bug."
+        )
+        raise ValueError(msg)
+
+    return enrichment_date_range
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the unified ingestion workflow.
 
@@ -271,7 +298,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             weather_config = build_weather_config_from_env(
                 max_api_calls=parsed_args.openweather_max_calls,
             )
-            assert enrichment_date_range is not None
+            enrichment_date_range = require_enrichment_date_range(
+                enrichment_date_range,
+                consumer_name="weather budget validation",
+            )
             validate_weather_api_budget(
                 enrichment_date_range[0],
                 enrichment_date_range[1],
@@ -295,7 +325,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
 
         if holidays_enabled:
-            assert enrichment_date_range is not None
+            enrichment_date_range = require_enrichment_date_range(
+                enrichment_date_range,
+                consumer_name="holiday ingestion",
+            )
             load_holidays(
                 enrichment_date_range[0],
                 enrichment_date_range[1],
@@ -306,8 +339,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
 
         if weather_enabled:
-            assert enrichment_date_range is not None
-            assert weather_config is not None
+            enrichment_date_range = require_enrichment_date_range(
+                enrichment_date_range,
+                consumer_name="weather ingestion",
+            )
+            if weather_config is None:
+                msg = (
+                    "Weather configuration is required before weather ingestion. "
+                    "This indicates a CLI orchestration bug."
+                )
+                raise ValueError(msg)
             load_weather_daily(
                 enrichment_date_range[0],
                 enrichment_date_range[1],

@@ -1,6 +1,9 @@
 -- Coverage test: mart_exec_daily intentionally emits only non-empty order
 -- dates, so every purchase_date present in fact_orders must appear exactly
--- once in the mart and the mart must not emit extra dates.
+-- once in the mart and the mart must not emit extra dates. This test is kept
+-- separate from assert_mart_exec_daily_reconciles.sql on purpose: it isolates
+-- grain/date-spine parity so triage can distinguish "missing dates" from
+-- "present dates with drifting measures".
 with expected as (
 
     select distinct
