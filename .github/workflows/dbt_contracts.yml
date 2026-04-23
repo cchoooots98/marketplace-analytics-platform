@@ -56,3 +56,9 @@ jobs:
           --target ci
           --no-partial-parse
           --target-path target_ci
+
+      - name: Validate dashboard assets
+        working-directory: .
+        run: >
+          python tasks.py dashboard-validate
+          --manifest marketplace_analytics_dbt/target_ci/manifest.json

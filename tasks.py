@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import TextIO
 from collections.abc import Callable, Sequence
 
+from dotenv import dotenv_values
+
 REPO_ROOT = Path(__file__).resolve().parent
 SETUP_DIRECTORIES = (
     Path("airflow/dags"),
@@ -39,6 +41,11 @@ PRIMARY_COMMANDS = (
     "dbt-parse",
     "dbt-freshness",
     "dbt-snapshot",
+    "dbt-build",
+    "dashboard-validate",
+    "metabase-up",
+    "metabase-down",
+    "metabase-logs",
 )
 
 
@@ -65,10 +72,25 @@ def _build_safe_environment(repo_root: Path | None = None) -> dict[str, str]:
     """Build a cross-platform subprocess environment for developer tools."""
     resolved_repo_root = _resolve_repo_root(repo_root)
     environment = os.environ.copy()
+    # Inject project .env into subprocess environments so downstream tools
+    # (dbt, pytest, ingestion CLI) see the same config without requiring the
+    # shell to export each value. Shell values win over .env by convention.
+    env_file = resolved_repo_root / ".env"
+    if env_file.is_file():
+        for env_key, env_value in dotenv_values(env_file).items():
+            if env_value is not None and env_key not in environment:
+                environment[env_key] = env_value
+    # Resolve the real user home before we sandbox HOME below, so tools that
+    # legitimately need the user config directory (e.g. dbt reading
+    # ~/.dbt/profiles.yml) can still find it.
+    real_user_home = Path.home()
     safe_home = str(resolved_repo_root)
     environment["HOME"] = safe_home
     environment["USERPROFILE"] = safe_home
     environment["BLACK_CACHE_DIR"] = str(resolved_repo_root / ".cache" / "black")
+    # Pin dbt's profiles directory to the real user home so the sandboxed HOME
+    # above does not hide ~/.dbt/profiles.yml from dbt subprocesses.
+    environment.setdefault("DBT_PROFILES_DIR", str(real_user_home / ".dbt"))
     return environment
 
 
@@ -263,6 +285,49 @@ def _run_dbt_snapshot(arguments: Sequence[str], repo_root: Path) -> int:
     )
 
 
+def _run_dbt_build(arguments: Sequence[str], repo_root: Path) -> int:
+    """Run `dbt build` from the project root."""
+    return _run_subprocess(
+        [*_resolve_script_command("dbt"), "build", *arguments],
+        cwd=_dbt_project_dir(repo_root),
+        repo_root=repo_root,
+    )
+
+
+def _run_dashboard_validate(arguments: Sequence[str], repo_root: Path) -> int:
+    """Validate version-controlled dashboard assets against the dbt manifest."""
+    return _run_subprocess(
+        [sys.executable, "-m", "dashboards.validation", *arguments],
+        repo_root=repo_root,
+    )
+
+
+def _run_metabase_up(_: Sequence[str], repo_root: Path) -> int:
+    """Start the local Metabase runtime with Docker Compose."""
+    return _run_subprocess(
+        ["docker", "compose", "up", "-d"],
+        repo_root=repo_root,
+    )
+
+
+def _run_metabase_down(_: Sequence[str], repo_root: Path) -> int:
+    """Stop the local Metabase runtime with Docker Compose."""
+    return _run_subprocess(
+        ["docker", "compose", "down"],
+        repo_root=repo_root,
+    )
+
+
+def _run_metabase_logs(arguments: Sequence[str], repo_root: Path) -> int:
+    """Stream recent Metabase logs from Docker Compose."""
+    command = ["docker", "compose", "logs"]
+    if arguments:
+        command.extend(arguments)
+    else:
+        command.extend(["--tail", "120", "metabase"])
+    return _run_subprocess(command, repo_root=repo_root)
+
+
 COMMAND_SPECS = {
     "setup": TaskSpec(
         description="Create starter directories and initialize .env",
@@ -323,6 +388,31 @@ COMMAND_SPECS = {
         description="Run dbt snapshot from marketplace_analytics_dbt",
         accepts_extra_args=True,
         handler=_run_dbt_snapshot,
+    ),
+    "dbt-build": TaskSpec(
+        description="Run dbt build from marketplace_analytics_dbt",
+        accepts_extra_args=True,
+        handler=_run_dbt_build,
+    ),
+    "dashboard-validate": TaskSpec(
+        description="Validate dashboard specs, SQL assets, and screenshots",
+        accepts_extra_args=True,
+        handler=_run_dashboard_validate,
+    ),
+    "metabase-up": TaskSpec(
+        description="Start the local Metabase and PostgreSQL runtime",
+        accepts_extra_args=False,
+        handler=_run_metabase_up,
+    ),
+    "metabase-down": TaskSpec(
+        description="Stop the local Metabase and PostgreSQL runtime",
+        accepts_extra_args=False,
+        handler=_run_metabase_down,
+    ),
+    "metabase-logs": TaskSpec(
+        description="Show recent logs from the local Metabase runtime",
+        accepts_extra_args=True,
+        handler=_run_metabase_logs,
     ),
 }
 

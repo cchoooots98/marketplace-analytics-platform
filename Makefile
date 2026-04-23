@@ -1,6 +1,6 @@
 PYTHON ?= python
 
-.PHONY: help setup install install-orchestration lint format format-check test ingest dbt-debug dbt-parse dbt-freshness dbt-snapshot
+.PHONY: help setup install install-orchestration lint format format-check test ingest dbt-debug dbt-parse dbt-freshness dbt-snapshot dbt-build dashboard-validate metabase-up metabase-down metabase-logs
 
 help:
 	$(PYTHON) tasks.py --help
@@ -40,3 +40,18 @@ dbt-freshness:
 
 dbt-snapshot:
 	$(PYTHON) tasks.py dbt-snapshot
+
+dbt-build:
+	$(PYTHON) tasks.py dbt-build
+
+dashboard-validate:
+	$(PYTHON) tasks.py dashboard-validate
+
+metabase-up:
+	$(PYTHON) tasks.py metabase-up
+
+metabase-down:
+	$(PYTHON) tasks.py metabase-down
+
+metabase-logs:
+	$(PYTHON) tasks.py metabase-logs

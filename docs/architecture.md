@@ -1,9 +1,11 @@
 # Architecture: MerchantPulse
 
-MerchantPulse is a production-style analytics platform for marketplace revenue,
-seller operations, seller experience, fulfillment quality, and customer
-experience reporting. The design follows an ELT pattern: source data is loaded
-into BigQuery first, then dbt transforms it into trusted analytics layers.
+MerchantPulse is an analytics platform for marketplace revenue, seller
+operations, fulfillment quality, and customer-experience reporting. The V1 BI
+surface is the Core Trio dashboard package: Executive Overview, Seller
+Operations, and Fulfillment Operations. The design follows an ELT pattern:
+source data is loaded into BigQuery first, then dbt transforms it into governed
+analytics layers.
 
 ## 1. Business Context
 
@@ -11,7 +13,7 @@ into BigQuery first, then dbt transforms it into trusted analytics layers.
 |---|---|
 | Executives | Daily revenue, demand, cancellation, delivery, and review health |
 | Marketplace operations | Seller commercial health, operational defects, delivery delay patterns, and customer-state operations views |
-| Customer experience | Review coverage, review sentiment, time-to-review analysis, and attributable seller experience |
+| Customer experience | Review coverage, review sentiment, time-to-review analysis, and attributable seller experience in the next release |
 | Analytics engineers | Documented grains, reusable logic, governed marts, and executable contracts |
 
 ## 2. System Context
@@ -101,11 +103,15 @@ flowchart LR
     end
 
     subgraph marts["Governed marts"]
-        exec["mart_exec_daily"]
-        seller_perf["mart_seller_performance"]
-        seller_exp["mart_seller_experience"]
-        fulfill["mart_fulfillment_ops"]
-        cx["mart_customer_experience"]
+        subgraph released_marts["Released marts (Core Trio / V1)"]
+            exec["mart_exec_daily"]
+            seller_perf["mart_seller_performance"]
+            fulfill["mart_fulfillment_ops"]
+        end
+        subgraph roadmap_marts["Roadmap marts (V1.1)"]
+            seller_exp["mart_seller_experience"]
+            cx["mart_customer_experience"]
+        end
     end
 
     stg_orders --> int_value
@@ -146,26 +152,27 @@ flowchart LR
 | Topic | Design choice |
 |---|---|
 | Pure dimensions | `dim_product`, `dim_seller`, and `dim_customer` publish entity attributes only |
-| Conformed dimensions | `dim_*` models are reusable contracts and not merely "last-mile" dashboard tables |
+| Conformed dimensions | `dim_*` models are reusable contracts, not single-purpose dashboard tables |
 | Canonical customer identity | `dim_customer` grain is `customer_unique_id`, not source `customer_id` |
 | Historical customer geography | Facts carry `customer_*_at_order` snapshots so historical orders stay historically accurate |
 | Seller and product semantics | `fact_order_items` uses current-state seller/product attributes intentionally; history is available through snapshots |
 | Conformed facts | Facts publish governed foreign keys and shared business context once |
 | Governed marts | `mart_exec_daily`, `mart_seller_performance`, `mart_seller_experience`, `mart_fulfillment_ops`, and `mart_customer_experience` are the approved BI contracts |
+| Dashboard package | The Core Trio release ships Executive Overview, Seller Operations, and Fulfillment Operations as a version-controlled dashboard package; live Metabase publication is an operator step in Metabase OSS |
 | Split seller subject areas | Seller commercial/operational metrics and seller experience metrics are separate contracts |
 | Split subject areas | Fulfillment operations and customer experience are separate marts to avoid mixed semantics |
 | Shared time semantics | Executive, seller, fulfillment, and experience marts cohort by `purchase_date` |
 | Shared bucket semantics | `delivery_delay_bucket` is reused everywhere via macro |
 
-## 6. Published Mart Grains
+## 6. Mart Grain Status
 
-| Model | Grain | Why |
-|---|---|---|
-| `mart_exec_daily` | One row per `calendar_date` | Canonical executive KPI cohort by purchase date |
-| `mart_seller_performance` | One row per `seller_id`, `calendar_date` | Seller-day commercial and operational monitoring on the full seller-order population |
-| `mart_seller_experience` | One row per `seller_id`, `calendar_date` | Seller-day attributable review coverage and sentiment on the single-seller subset |
-| `mart_fulfillment_ops` | One row per `purchase_date`, `customer_state`, `delivery_delay_bucket` | Order-population operational reporting |
-| `mart_customer_experience` | One row per `purchase_date`, `customer_state`, `delivery_delay_bucket` | Review coverage and sentiment reporting |
+| Model | Release status | Grain | Why |
+|---|---|---|---|
+| `mart_exec_daily` | Released in Core Trio | One row per `calendar_date` | Canonical executive KPI cohort by purchase date |
+| `mart_seller_performance` | Released in Core Trio | One row per `seller_id`, `calendar_date` | Seller-day commercial and operational monitoring on the full seller-order population |
+| `mart_fulfillment_ops` | Released in Core Trio | One row per `purchase_date`, `customer_state`, `delivery_delay_bucket` | Order-population operational reporting |
+| `mart_seller_experience` | Roadmap for V1.1 | One row per `seller_id`, `calendar_date` | Seller-day attributable review coverage and sentiment on the single-seller subset |
+| `mart_customer_experience` | Roadmap for V1.1 | One row per `purchase_date`, `customer_state`, `delivery_delay_bucket` | Review coverage and sentiment reporting |
 
 ## 7. Data Quality And Reliability Gates
 
@@ -176,7 +183,7 @@ flowchart TB
     dbt_parse["dbt parse"]
     dbt_tests["dbt schema tests"]
     custom_tests["dbt singular reconciliation tests"]
-    publish["Publish marts and dashboards"]
+    publish["Publish marts and the Core Trio dashboard package"]
 
     ingest --> raw_checks
     raw_checks --> dbt_parse
@@ -194,7 +201,7 @@ flowchart TB
 | Cross-layer alignment | Holiday semantics come from `dim_date` and remain consistent in facts and marts |
 | Attribution integrity | Seller experience includes only single-seller orders |
 | Reconciliation | Executive, seller, fulfillment, and customer-experience marts reconcile to their upstream facts or reusable intermediates |
-| Published-shape contract | BI-facing marts enforce schema with dbt model contracts and dashboards are declared as dbt exposures |
+| Published-shape contract | BI-facing marts enforce schema with dbt model contracts and the Core Trio dashboards are declared as dbt exposures |
 | Runtime operations | Scheduled warehouse-backed freshness and dbt tests can run separately from parse-only CI |
 
 ## 8. Architecture Principles
@@ -205,6 +212,7 @@ flowchart TB
 - Historical customer geography belongs on facts as order-time snapshots.
 - Seller performance and seller experience are separate contracts with separate populations.
 - Dashboards read marts and must not rebuild KPI logic.
+- The V1 dashboard release is intentionally narrow: commercial signal, seller ownership, and fulfillment root cause come before experience expansion.
 - Holiday and delay semantics are shared contracts, not per-model reinventions.
 - Ingestion and transformations are idempotent so reruns do not create duplicates.
 - Documentation, tests, and SQL must describe the same contract.

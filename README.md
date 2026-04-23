@@ -1,14 +1,15 @@
 # MerchantPulse: Marketplace Revenue & Fulfillment Analytics Platform
 
-MerchantPulse is a production-style data engineering and analytics engineering
-project for a marketplace business. It shows how transactional and enrichment
-data can be loaded into BigQuery, modeled with dbt, checked with data quality
-rules, and served to executive and operations dashboards.
+MerchantPulse is a marketplace analytics platform that loads transactional and
+enrichment data into BigQuery, models it with dbt under explicit data quality
+contracts, and serves the resulting governed marts to executive and operations
+dashboards.
 
-This repository is currently in the reliability-and-contracts phase. Unified
-ingestion, warehouse modeling, snapshots, freshness checks, and mart contracts
-are implemented. The remaining planned surface area is orchestration and BI
-serving.
+The current release covers unified ingestion, warehouse modeling, snapshots,
+source freshness SLAs, mart contracts, and the version-controlled Core Trio
+dashboard package. Live Metabase publication is operator-managed in Metabase
+OSS. Orchestration and the follow-on experience dashboards are tracked on the
+roadmap.
 
 ## Business Problem
 
@@ -39,9 +40,9 @@ business questions -> ingestion -> warehouse modeling -> data quality
 | Reliability and history controls | Implemented | source freshness SLAs, snapshots, singular DQ tests, runbook, and ADR updates |
 | Scheduled runtime warehouse checks | Implemented | `.github/workflows/dbt_runtime_checks.yml` runs freshness, snapshots, and dbt tests on a schedule when secrets are configured |
 | Airflow orchestration | Planned | `requirements-orchestration.txt` provides optional dependencies; `airflow/dags/` does not contain DAGs yet |
-| Metabase dashboards | Planned | `dashboards/screenshots/` folder exists |
+| Metabase Core Trio dashboard package | Implemented in repo | `docker-compose.yml`, `dashboards/specs/core_trio.json`, and `docs/dashboard_specs.md` define the local runtime and the dashboard contracts |
 | GitHub Actions CI | Implemented | `.github/workflows/dbt_contracts.yml` |
-| dbt exposures and mart contracts | Implemented | `marketplace_analytics_dbt/models/exposures.yml`, mart `schema.yml` files |
+| Core Trio exposures and mart contracts | Implemented | `marketplace_analytics_dbt/models/exposures.yml`, mart `schema.yml` files |
 
 ## Business Questions
 
@@ -95,7 +96,7 @@ For the full system view, see [`docs/architecture.md`](docs/architecture.md).
 | BigQuery | Cloud data warehouse | Scalable SQL-first analytics storage, similar to Snowflake or Redshift |
 | dbt-bigquery | Transformation and documentation | Version-controlled SQL models, tests, lineage, and docs |
 | Python | Ingestion and validation | Batch loaders, API calls, and smoke checks |
-| Metabase | Business intelligence | Fast stakeholder-facing dashboards for portfolio review |
+| Metabase | Business intelligence | Stakeholder-facing dashboards over governed marts |
 | Airflow | Orchestration | Directed Acyclic Graph scheduling for repeatable pipelines |
 | Docker Compose | Local runtime | Reproducible local services for Airflow and Metabase |
 | GitHub Actions | Continuous integration | Automated linting, tests, and dbt validation on pull requests |
@@ -124,14 +125,18 @@ prepared base, and marts are plated dishes for business users.
 | Conformed | `marts` datasets for `dim_*` and `fact_*` models | Publish reusable dimensions and facts shared across subject areas |
 | Marts | `marts` | Serve stable subject-area KPI tables with one documented grain per model |
 
-## Planned Analytics Outputs
+## Published Analytics Outputs
 
 | Output | Core models | Main metrics |
 |---|---|---|
 | Executive Overview | `mart_exec_daily` | GMV, orders, AOV, cancellation rate, late delivery rate, average review score |
 | Seller Operations | `mart_seller_performance` | seller GMV, late delivery rate, cancellation rate, operational defect rate |
-| Seller Experience | `mart_seller_experience` | attributable review coverage, attributable review score, low-review rate |
-| Fulfillment and Customer Experience | `mart_fulfillment_ops`, `mart_customer_experience` | delivery delay, weather impact, holiday impact, review score by delay bucket |
+| Fulfillment Operations | `mart_fulfillment_ops` | delay rate by state, delay bucket mix, holiday impact, proxy weather impact, average late days |
+
+Roadmap expansion:
+
+- `mart_customer_experience` for customer-experience storytelling on the shared fulfillment cohort.
+- `mart_seller_experience` for attributable seller review coverage and sentiment.
 
 Metric definitions live in
 [`docs/metric_definitions.md`](docs/metric_definitions.md).
@@ -188,7 +193,24 @@ pytest tests/test_bigquery_connection.py -q
 
 ```bash
 python tasks.py dbt-debug
+python tasks.py dbt-build --select mart_exec_daily
 ```
+
+8. Validate the version-controlled dashboard package and start the local
+   Metabase runtime.
+
+```bash
+python tasks.py dashboard-validate
+python tasks.py metabase-up
+```
+
+9. In Metabase, connect BigQuery with the service account JSON and sync only
+   the `marts` dataset. Then build the `MerchantPulse / Executive`,
+   `MerchantPulse / Seller Ops`, and `MerchantPulse / Fulfillment Ops`
+   collections from the SQL assets in `dashboards/sql/core_trio/`. In
+   Metabase OSS, this saved-question publication step is still manual, while
+   the repository keeps the SQL, contract metadata, and reference captures in
+   version control.
 
 ## Documentation Map
 
@@ -201,17 +223,16 @@ python tasks.py dbt-debug
 | [`docs/decisions.md`](docs/decisions.md) | Architecture decisions and trade-offs |
 | [`docs/dashboard_specs.md`](docs/dashboard_specs.md) | Dashboard users, charts, and mart dependencies |
 
-Interview notes and resume bullets remain part of the portfolio-polish roadmap,
-but they are not committed repository artifacts yet.
-
 ## Data Quality Strategy
 
 - Use dbt generic schema tests as the first contract layer for keys, ranges,
   accepted values, and relationships.
 - Use singular tests for cross-column and cross-model invariants such as
-  delivery timestamp integrity and order-grain payment reconciliation.
+  delivery-flag integrity and order-grain aggregation reconciliation.
 - Keep KPI logic in marts and reconciliation logic in tests so dashboards do
   not silently redefine business metrics.
+- Validate the version-controlled dashboard specs against dbt manifest metadata
+  so screenshots, SQL assets, and exposures cannot drift independently.
 - Treat optional enrichment as nullable, but fail fast on broken transactional
   keys or contract-defining timestamps.
 
@@ -257,9 +278,9 @@ but they are not committed repository artifacts yet.
 | Foundation | Project scope, environment, dbt initialization, architecture docs | README, architecture, env template, dbt debug path |
 | Ingestion | Load Olist, holiday, and weather data into raw datasets | Idempotent loaders, batch metadata, logging, tests |
 | dbt modeling | Build staging, intermediate, facts, dimensions, and marts | Grain documented, schema tests, custom tests, dbt docs |
-| Reliability and history | Operate freshness, snapshots, runbook, and CI contracts | freshness SLAs, snapshot demo, troubleshooting docs, GitHub Actions parse checks, scheduled runtime checks |
-| Serving | Build Metabase dashboards from marts only | Dashboard screenshots and field mapping |
-| Portfolio polish | Freeze interview version | architecture image, dbt lineage image, dashboard screenshots, resume bullets |
+| Reliability and history | Operate freshness, snapshots, runbook, and CI contracts | freshness SLAs, snapshot tracking, troubleshooting docs, GitHub Actions parse checks, scheduled runtime checks |
+| Serving | Publish the Core Trio Metabase package from marts only | Docker Compose runtime, dashboard SQL/specs, dashboard contract validation, and reference capture artifacts |
+| V1 release packaging | Stabilize V1 release artifacts | Architecture diagrams, dbt lineage exports, dashboard reference captures |
 
 ## Design Principles
 
@@ -268,4 +289,4 @@ but they are not committed repository artifacts yet.
 - Make ingestion and transformation rerunnable without duplicate records.
 - Fail fast when core identifiers or required columns are missing.
 - Allow optional enrichment to be null, but never silently lose transaction keys.
-- Keep documentation honest about what is built and what is planned.
+- Keep documentation accurate about what is built and what is planned.

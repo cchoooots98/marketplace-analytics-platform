@@ -8,10 +8,10 @@ decision explains the trade-off, not just the selected implementation.
 | Field | Decision |
 |---|---|
 | Status | Accepted |
-| Context | The project needs a cloud warehouse recognizable to data engineering and analytics engineering reviewers |
+| Context | The platform needs a cloud-native, SQL-first analytics warehouse with managed scaling and first-class dbt support |
 | Decision | Use BigQuery as the SQL-first analytics warehouse |
-| Why | BigQuery is easy to explain as a scalable analytics database and supports partitioned incremental facts cleanly |
-| Trade-off | It requires local credentials and cloud setup for full validation |
+| Why | BigQuery offers serverless scaling, native partitioning and clustering, and a mature dbt adapter, which fits the ELT pattern used throughout this platform |
+| Trade-off | It requires GCP credentials and project setup for any warehouse-backed validation |
 
 ## ADR 002: Use dbt for warehouse transformations
 
@@ -20,7 +20,7 @@ decision explains the trade-off, not just the selected implementation.
 | Status | Accepted |
 | Context | SQL logic, tests, and docs should live close to the warehouse models |
 | Decision | Use dbt-bigquery for staging, intermediate, conformed models, marts, tests, and docs |
-| Why | dbt makes the project read like a production analytics engineering workflow rather than a folder of ad hoc SQL files |
+| Why | dbt provides version-controlled SQL, declarative tests, lineage, model contracts, and generated documentation as one toolchain |
 | Trade-off | dbt adds project structure and profile setup that must be documented carefully |
 
 ## ADR 003: Follow raw -> staging -> intermediate -> conformed contracts -> marts layering
@@ -30,7 +30,7 @@ decision explains the trade-off, not just the selected implementation.
 | Status | Accepted |
 | Context | The project needs clear ownership for source fidelity, cleaning, reusable logic, conformed entities, and analytics consumption |
 | Decision | Use raw, staging, reusable intermediates, conformed facts/dimensions, and governed marts as the warehouse layering standard |
-| Why | This mirrors common enterprise warehouse practice and makes grain ownership, testing, and documentation easier to review. Folder paths remain organizational, so a conformed dimension such as `dim_date` may be reused outside a pure "last step only" mart flow. |
+| Why | This is a standard warehouse layering pattern that gives each layer one responsibility and makes grain ownership, testing, and documentation easier to govern. Folder paths remain organizational, so a conformed dimension such as `dim_date` may be reused outside a strict "last step only" mart flow. |
 | Trade-off | It creates more files and some folder names no longer imply strict DAG order, so the architecture docs must explain semantic ownership clearly |
 
 ## ADR 004: Keep dimensions pure
@@ -60,7 +60,7 @@ decision explains the trade-off, not just the selected implementation.
 | Status | Accepted |
 | Context | A current-state customer dimension cannot safely answer historical order geography if customer attributes ever change |
 | Decision | Facts publish `customer_zip_code_prefix_at_order`, `customer_city_at_order`, and `customer_state_at_order` |
-| Why | This is a common enterprise compromise for V1: current-state customer dimension plus order-time snapshots on events |
+| Why | This is the standard V1 compromise: a current-state customer dimension for "what is true now" plus order-time snapshots on events for "what was true at the time of order" |
 | Trade-off | Geography appears in both the dimension and facts, but with different semantics that must be documented clearly |
 
 ## ADR 007: Split fulfillment operations and customer experience into separate marts
@@ -120,7 +120,7 @@ decision explains the trade-off, not just the selected implementation.
 | Status | Accepted |
 | Context | Order facts grow over time and order status changes across the lifecycle |
 | Decision | Materialize `fact_orders` incrementally with merge on `order_id`, partition by `purchase_date`, cluster by `customer_unique_id`, `order_status`, and replay a 90-day business-SLA lookback window by default |
-| Why | Olist does not expose a trustworthy row-level updated_at watermark, so a wide replay window is the honest enterprise compromise for catching late lifecycle changes |
+| Why | Olist does not expose a trustworthy row-level updated_at watermark, so a wide replay window is the safest pragmatic strategy for catching late lifecycle changes without depending on an unreliable change marker |
 | Trade-off | The model scans more history than a true CDC watermark would, and historical logic changes still require a full refresh |
 
 ## ADR 013: Publish seller experience only on the attributable order subset
@@ -130,7 +130,7 @@ decision explains the trade-off, not just the selected implementation.
 | Status | Accepted |
 | Context | A marketplace review is naturally an order-level signal, not a seller-level signal, and copying one order review to every seller on a multi-seller order creates false precision |
 | Decision | Publish `mart_seller_experience` on the subset of orders that have exactly one distinct seller in `fact_order_items` |
-| Why | This preserves semantic honesty while still giving the project a governed seller experience contract with measurable review coverage |
+| Why | This preserves attribution correctness while still publishing a governed seller experience contract with an explicit review-coverage metric on the attributable subset |
 | Trade-off | Seller experience metrics no longer represent the full seller-order population; coverage must be published explicitly |
 
 ## ADR 014: Centralize order-level review aggregation in one intermediate contract
@@ -150,7 +150,7 @@ decision explains the trade-off, not just the selected implementation.
 | Status | Accepted |
 | Context | The project needs source observability, but freshness checks run against the warehouse and should not be confused with parse-only CI |
 | Decision | Use `ingested_at_utc` as the source freshness timestamp, warn at the stated SLA, and fail at 2x the SLA for supported transactional and enrichment sources |
-| Why | This matches a common enterprise operating pattern: operators see early degradation before the source becomes truly stale |
+| Why | This matches the standard freshness-SLA operating pattern: operators see early degradation before the source becomes truly stale |
 | Trade-off | Freshness remains a runtime control in a configured environment; pull-request CI still cannot prove data recency. Static master-data backfills (`customers`, `sellers`, `products`, `geolocation`) intentionally do not publish freshness SLAs in V1. |
 
 ## ADR 016: Track seller and product history with check-based snapshots
@@ -160,7 +160,7 @@ decision explains the trade-off, not just the selected implementation.
 | Status | Accepted |
 | Context | Olist seller and product sources do not provide a trustworthy business `updated_at`, but the platform still needs a credible history-tracking story |
 | Decision | Use dbt snapshots with `check` strategy on cleaned staging models `stg_sellers` and `stg_products` |
-| Why | This demonstrates SCD2-style historical thinking while tracking only semantic master-data changes instead of raw batch noise |
+| Why | This delivers SCD2-style history tracking on the cleaned staging layer while restricting change detection to semantic master-data attributes instead of batch metadata noise |
 | Trade-off | Snapshot change detection must be curated carefully; adding noisy columns to `check_cols` would create false history versions |
 
 ## ADR 017: Keep domain constraints in generic tests and reserve singular tests for business invariants
@@ -180,7 +180,7 @@ decision explains the trade-off, not just the selected implementation.
 | Status | Accepted |
 | Context | Customer geography is copied onto facts at order time, but seller and product attributes could either be copied as order-time snapshots or left as current-state joins |
 | Decision | Keep seller and product attributes current-state in `fact_order_items` and track their history in snapshots instead of copying them onto every order item row |
-| Why | This keeps the line-item fact slimmer and semantically honest for V1 while still preserving a governed history path for master-data analysis |
+| Why | This keeps the line-item fact lean and prevents implying a frozen-at-order-time contract that the source data does not support, while history remains accessible through snapshots |
 | Trade-off | Historical seller/product attribute analysis requires an explicit join to snapshots; marts should not imply those attributes are frozen at order time |
 
 ## ADR 019: Run warehouse-backed freshness and dbt tests on a schedule

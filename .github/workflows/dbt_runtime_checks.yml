@@ -96,3 +96,11 @@ jobs:
           --target runtime
           --target-path target_runtime
           --select path:snapshots path:models/marts path:tests
+
+      - name: Upload runtime dbt artifacts on failure
+        if: failure() && steps.config.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-runtime-artifacts
+          path: |
+            marketplace_analytics_dbt/target_runtime/

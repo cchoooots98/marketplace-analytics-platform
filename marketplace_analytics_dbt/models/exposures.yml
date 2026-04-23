@@ -27,19 +27,6 @@ exposures:
     owner:
       name: Yuanyuan Feng
 
-  - name: seller_experience_dashboard
-    label: Seller Experience Dashboard
-    type: dashboard
-    maturity: medium
-    url: docs/dashboard_specs.md#dashboard-5-seller-experience
-    description: >
-      Seller attributable review-coverage and sentiment dashboard backed only
-      by mart_seller_experience.
-    depends_on:
-      - ref('mart_seller_experience')
-    owner:
-      name: Yuanyuan Feng
-
   - name: fulfillment_operations_dashboard
     label: Fulfillment Operations Dashboard
     type: dashboard
@@ -50,18 +37,5 @@ exposures:
       analysis backed only by mart_fulfillment_ops.
     depends_on:
       - ref('mart_fulfillment_ops')
-    owner:
-      name: Yuanyuan Feng
-
-  - name: customer_experience_dashboard
-    label: Customer Experience Dashboard
-    type: dashboard
-    maturity: medium
-    url: docs/dashboard_specs.md#dashboard-4-customer-experience
-    description: >
-      Customer-experience dashboard for review coverage, sentiment, and time-
-      to-review analysis backed only by mart_customer_experience.
-    depends_on:
-      - ref('mart_customer_experience')
     owner:
       name: Yuanyuan Feng

@@ -1,0 +1,1073 @@
+{
+  "dashboards": [
+    {
+      "name": "Executive Overview",
+      "exposure_name": "executive_overview_dashboard",
+      "primary_model": "mart_exec_daily",
+      "collection_path": [
+        "MerchantPulse",
+        "Executive"
+      ],
+      "screenshot_path": "dashboards/screenshots/executive_overview_v1.svg",
+      "narrative_intent": "Establish the top-line commercial and service-health signal before drilling into seller and fulfillment ownership.",
+      "dashboard_copy": [
+        "GMV excludes cancelled orders by contract.",
+        "Late delivery rate uses delivered orders only as the denominator.",
+        "All metrics are cohorted by purchase date so each row describes one comparable order population."
+      ],
+      "filters": [
+        {
+          "name": "date_range",
+          "label": "Purchase Date",
+          "variable": "date_range",
+          "type": "field_filter",
+          "source_model": "mart_exec_daily",
+          "field_name": "calendar_date"
+        }
+      ],
+      "cards": [
+        {
+          "id": "exec_gmv_kpi",
+          "title": "GMV",
+          "sql_path": "dashboards/sql/core_trio/executive/exec_gmv_kpi.sql",
+          "visualization": "number",
+          "source_model": "mart_exec_daily",
+          "allowed_join_models": [],
+          "narrative_intent": "Headline commercial output after cancelled demand is removed.",
+          "output_columns": [
+            "gmv"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_exec_daily",
+              "name": "calendar_date"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "gmv"
+            }
+          ],
+          "filter_names": [
+            "date_range"
+          ]
+        },
+        {
+          "id": "exec_orders_kpi",
+          "title": "Orders",
+          "sql_path": "dashboards/sql/core_trio/executive/exec_orders_kpi.sql",
+          "visualization": "number",
+          "source_model": "mart_exec_daily",
+          "allowed_join_models": [],
+          "narrative_intent": "Demand volume across the filtered purchase-date window.",
+          "output_columns": [
+            "orders_count"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_exec_daily",
+              "name": "calendar_date"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "orders_count"
+            }
+          ],
+          "filter_names": [
+            "date_range"
+          ]
+        },
+        {
+          "id": "exec_aov_kpi",
+          "title": "AOV",
+          "sql_path": "dashboards/sql/core_trio/executive/exec_aov_kpi.sql",
+          "visualization": "number",
+          "source_model": "mart_exec_daily",
+          "allowed_join_models": [],
+          "narrative_intent": "Commercial order value computed from published mart numerator and denominator support columns.",
+          "output_columns": [
+            "aov"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_exec_daily",
+              "name": "calendar_date"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "gmv"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "non_cancelled_orders_count"
+            }
+          ],
+          "filter_names": [
+            "date_range"
+          ]
+        },
+        {
+          "id": "exec_cancellation_rate_kpi",
+          "title": "Cancellation Rate",
+          "sql_path": "dashboards/sql/core_trio/executive/exec_cancellation_rate_kpi.sql",
+          "visualization": "number",
+          "source_model": "mart_exec_daily",
+          "allowed_join_models": [],
+          "narrative_intent": "Attrition signal rolled up from the published cancellation numerator and demand denominator.",
+          "output_columns": [
+            "cancellation_rate"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_exec_daily",
+              "name": "calendar_date"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "cancelled_orders_count"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "orders_count"
+            }
+          ],
+          "filter_names": [
+            "date_range"
+          ]
+        },
+        {
+          "id": "exec_late_delivery_rate_kpi",
+          "title": "Late Delivery Rate",
+          "sql_path": "dashboards/sql/core_trio/executive/exec_late_delivery_rate_kpi.sql",
+          "visualization": "number",
+          "source_model": "mart_exec_daily",
+          "allowed_join_models": [],
+          "narrative_intent": "Service-level signal rolled up only over delivered orders.",
+          "output_columns": [
+            "late_delivery_rate"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_exec_daily",
+              "name": "calendar_date"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "late_orders_count"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "delivered_orders_count"
+            }
+          ],
+          "filter_names": [
+            "date_range"
+          ]
+        },
+        {
+          "id": "exec_avg_review_score_kpi",
+          "title": "Average Review Score",
+          "sql_path": "dashboards/sql/core_trio/executive/exec_avg_review_score_kpi.sql",
+          "visualization": "number",
+          "source_model": "mart_exec_daily",
+          "allowed_join_models": [],
+          "narrative_intent": "Customer sentiment weighted by published review volume so sparse days do not dominate the period score.",
+          "output_columns": [
+            "avg_review_score"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_exec_daily",
+              "name": "calendar_date"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "avg_review_score"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "reviews_count"
+            }
+          ],
+          "filter_names": [
+            "date_range"
+          ]
+        },
+        {
+          "id": "exec_new_customers_kpi",
+          "title": "New Customers",
+          "sql_path": "dashboards/sql/core_trio/executive/exec_new_customers_kpi.sql",
+          "visualization": "number",
+          "source_model": "mart_exec_daily",
+          "allowed_join_models": [],
+          "narrative_intent": "Customer acquisition signal built from first-order flags resolved in the warehouse.",
+          "output_columns": [
+            "new_customers_count"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_exec_daily",
+              "name": "calendar_date"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "new_customers_count"
+            }
+          ],
+          "filter_names": [
+            "date_range"
+          ]
+        },
+        {
+          "id": "exec_gmv_orders_trend",
+          "title": "GMV and Orders Trend",
+          "sql_path": "dashboards/sql/core_trio/executive/exec_gmv_orders_trend.sql",
+          "visualization": "combo",
+          "source_model": "mart_exec_daily",
+          "allowed_join_models": [],
+          "narrative_intent": "Shows whether revenue movement is driven by demand volume or ticket size.",
+          "output_columns": [
+            "calendar_date",
+            "gmv",
+            "orders_count"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_exec_daily",
+              "name": "calendar_date"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "gmv"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "orders_count"
+            }
+          ],
+          "filter_names": [
+            "date_range"
+          ]
+        },
+        {
+          "id": "exec_cancellation_vs_late_trend",
+          "title": "Cancellation vs Late Delivery",
+          "sql_path": "dashboards/sql/core_trio/executive/exec_cancellation_vs_late_trend.sql",
+          "visualization": "line",
+          "source_model": "mart_exec_daily",
+          "allowed_join_models": [],
+          "narrative_intent": "Separates demand attrition from post-purchase service failure.",
+          "output_columns": [
+            "calendar_date",
+            "cancellation_rate",
+            "late_delivery_rate"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_exec_daily",
+              "name": "calendar_date"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "cancellation_rate"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "late_delivery_rate"
+            }
+          ],
+          "filter_names": [
+            "date_range"
+          ]
+        },
+        {
+          "id": "exec_new_customers_trend",
+          "title": "New Customers Trend",
+          "sql_path": "dashboards/sql/core_trio/executive/exec_new_customers_trend.sql",
+          "visualization": "line",
+          "source_model": "mart_exec_daily",
+          "allowed_join_models": [],
+          "narrative_intent": "Shows whether growth is still being fueled by first-time buyers.",
+          "output_columns": [
+            "calendar_date",
+            "new_customers_count"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_exec_daily",
+              "name": "calendar_date"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "new_customers_count"
+            }
+          ],
+          "filter_names": [
+            "date_range"
+          ]
+        },
+        {
+          "id": "exec_review_score_trend",
+          "title": "Review Score Trend",
+          "sql_path": "dashboards/sql/core_trio/executive/exec_review_score_trend.sql",
+          "visualization": "line",
+          "source_model": "mart_exec_daily",
+          "allowed_join_models": [],
+          "narrative_intent": "Tracks customer sentiment on the same purchase-date cohort as commercial KPIs.",
+          "output_columns": [
+            "calendar_date",
+            "avg_review_score",
+            "reviews_count"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_exec_daily",
+              "name": "calendar_date"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "avg_review_score"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "reviews_count"
+            }
+          ],
+          "filter_names": [
+            "date_range"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Seller Operations",
+      "exposure_name": "seller_operations_dashboard",
+      "primary_model": "mart_seller_performance",
+      "collection_path": [
+        "MerchantPulse",
+        "Seller Ops"
+      ],
+      "screenshot_path": "dashboards/screenshots/seller_operations_v1.svg",
+      "narrative_intent": "Translate the executive signal into accountable seller-level operational and commercial ownership.",
+      "dashboard_copy": [
+        "The dashboard covers the full seller-order population from mart_seller_performance.",
+        "Seller labels may fall back to seller_id when dimension attributes are missing.",
+        "Operational defect rate means cancelled or late seller orders."
+      ],
+      "filters": [
+        {
+          "name": "date_range",
+          "label": "Purchase Date",
+          "variable": "date_range",
+          "type": "field_filter",
+          "source_model": "mart_seller_performance",
+          "field_name": "calendar_date"
+        },
+        {
+          "name": "seller_id",
+          "label": "Seller",
+          "variable": "seller_id",
+          "type": "field_filter",
+          "source_model": "mart_seller_performance",
+          "field_name": "seller_id"
+        },
+        {
+          "name": "seller_state",
+          "label": "Seller State",
+          "variable": "seller_state",
+          "type": "field_filter",
+          "source_model": "dim_seller",
+          "field_name": "seller_state"
+        }
+      ],
+      "cards": [
+        {
+          "id": "seller_top_gmv",
+          "title": "Top Sellers by GMV",
+          "sql_path": "dashboards/sql/core_trio/seller_ops/seller_top_gmv.sql",
+          "visualization": "bar",
+          "source_model": "mart_seller_performance",
+          "allowed_join_models": [
+            "dim_seller"
+          ],
+          "narrative_intent": "Highlights the commercial owner set carrying the most revenue.",
+          "output_columns": [
+            "seller_id",
+            "seller_label",
+            "seller_state",
+            "gmv"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_seller_performance",
+              "name": "seller_id"
+            },
+            {
+              "source_model": "mart_seller_performance",
+              "name": "calendar_date"
+            },
+            {
+              "source_model": "mart_seller_performance",
+              "name": "gmv"
+            },
+            {
+              "source_model": "dim_seller",
+              "name": "seller_city"
+            },
+            {
+              "source_model": "dim_seller",
+              "name": "seller_state"
+            }
+          ],
+          "filter_names": [
+            "date_range",
+            "seller_id",
+            "seller_state"
+          ],
+          "derived_columns": [
+            {
+              "name": "seller_label",
+              "description": "Display label built as city + state + seller_id, with fallback to seller_id when seller dimension attributes are missing.",
+              "source_columns": [
+                {
+                  "source_model": "mart_seller_performance",
+                  "name": "seller_id"
+                },
+                {
+                  "source_model": "dim_seller",
+                  "name": "seller_city"
+                },
+                {
+                  "source_model": "dim_seller",
+                  "name": "seller_state"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "seller_top_aov",
+          "title": "Top Sellers by AOV",
+          "sql_path": "dashboards/sql/core_trio/seller_ops/seller_top_aov.sql",
+          "visualization": "bar",
+          "source_model": "mart_seller_performance",
+          "allowed_join_models": [
+            "dim_seller"
+          ],
+          "narrative_intent": "Shows which sellers convert their demand into higher-value commercial baskets.",
+          "output_columns": [
+            "seller_id",
+            "seller_label",
+            "seller_state",
+            "aov",
+            "gmv",
+            "non_cancelled_orders_count"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_seller_performance",
+              "name": "seller_id"
+            },
+            {
+              "source_model": "mart_seller_performance",
+              "name": "calendar_date"
+            },
+            {
+              "source_model": "mart_seller_performance",
+              "name": "gmv"
+            },
+            {
+              "source_model": "mart_seller_performance",
+              "name": "non_cancelled_orders_count"
+            },
+            {
+              "source_model": "dim_seller",
+              "name": "seller_city"
+            },
+            {
+              "source_model": "dim_seller",
+              "name": "seller_state"
+            }
+          ],
+          "filter_names": [
+            "date_range",
+            "seller_id",
+            "seller_state"
+          ],
+          "derived_columns": [
+            {
+              "name": "seller_label",
+              "description": "Display label built as city + state + seller_id, with fallback to seller_id when seller dimension attributes are missing.",
+              "source_columns": [
+                {
+                  "source_model": "mart_seller_performance",
+                  "name": "seller_id"
+                },
+                {
+                  "source_model": "dim_seller",
+                  "name": "seller_city"
+                },
+                {
+                  "source_model": "dim_seller",
+                  "name": "seller_state"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "seller_late_delivery_ranking",
+          "title": "Late Delivery Ranking",
+          "sql_path": "dashboards/sql/core_trio/seller_ops/seller_late_delivery_ranking.sql",
+          "visualization": "table",
+          "source_model": "mart_seller_performance",
+          "allowed_join_models": [
+            "dim_seller"
+          ],
+          "narrative_intent": "Ranks operational risk owners whose delivered orders are slipping the SLA most often.",
+          "output_columns": [
+            "seller_id",
+            "seller_label",
+            "seller_state",
+            "late_delivery_rate",
+            "late_orders_count",
+            "delivered_orders_count"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_seller_performance",
+              "name": "seller_id"
+            },
+            {
+              "source_model": "mart_seller_performance",
+              "name": "calendar_date"
+            },
+            {
+              "source_model": "mart_seller_performance",
+              "name": "late_orders_count"
+            },
+            {
+              "source_model": "mart_seller_performance",
+              "name": "delivered_orders_count"
+            },
+            {
+              "source_model": "dim_seller",
+              "name": "seller_city"
+            },
+            {
+              "source_model": "dim_seller",
+              "name": "seller_state"
+            }
+          ],
+          "filter_names": [
+            "date_range",
+            "seller_id",
+            "seller_state"
+          ],
+          "derived_columns": [
+            {
+              "name": "seller_label",
+              "description": "Display label built as city + state + seller_id, with fallback to seller_id when seller dimension attributes are missing.",
+              "source_columns": [
+                {
+                  "source_model": "mart_seller_performance",
+                  "name": "seller_id"
+                },
+                {
+                  "source_model": "dim_seller",
+                  "name": "seller_city"
+                },
+                {
+                  "source_model": "dim_seller",
+                  "name": "seller_state"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "seller_cancellation_ranking",
+          "title": "Cancellation Ranking",
+          "sql_path": "dashboards/sql/core_trio/seller_ops/seller_cancellation_ranking.sql",
+          "visualization": "table",
+          "source_model": "mart_seller_performance",
+          "allowed_join_models": [
+            "dim_seller"
+          ],
+          "narrative_intent": "Separates seller-side attrition from platform-wide demand softness.",
+          "output_columns": [
+            "seller_id",
+            "seller_label",
+            "seller_state",
+            "cancellation_rate",
+            "cancelled_orders_count",
+            "orders_count"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_seller_performance",
+              "name": "seller_id"
+            },
+            {
+              "source_model": "mart_seller_performance",
+              "name": "calendar_date"
+            },
+            {
+              "source_model": "mart_seller_performance",
+              "name": "cancelled_orders_count"
+            },
+            {
+              "source_model": "mart_seller_performance",
+              "name": "orders_count"
+            },
+            {
+              "source_model": "dim_seller",
+              "name": "seller_city"
+            },
+            {
+              "source_model": "dim_seller",
+              "name": "seller_state"
+            }
+          ],
+          "filter_names": [
+            "date_range",
+            "seller_id",
+            "seller_state"
+          ],
+          "derived_columns": [
+            {
+              "name": "seller_label",
+              "description": "Display label built as city + state + seller_id, with fallback to seller_id when seller dimension attributes are missing.",
+              "source_columns": [
+                {
+                  "source_model": "mart_seller_performance",
+                  "name": "seller_id"
+                },
+                {
+                  "source_model": "dim_seller",
+                  "name": "seller_city"
+                },
+                {
+                  "source_model": "dim_seller",
+                  "name": "seller_state"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "seller_operational_defect_view",
+          "title": "Operational Defect View",
+          "sql_path": "dashboards/sql/core_trio/seller_ops/seller_operational_defect_view.sql",
+          "visualization": "table",
+          "source_model": "mart_seller_performance",
+          "allowed_join_models": [
+            "dim_seller"
+          ],
+          "narrative_intent": "Combines late and cancelled order risk into one seller-level action list.",
+          "output_columns": [
+            "seller_id",
+            "seller_label",
+            "seller_state",
+            "operational_defect_orders_count",
+            "orders_count",
+            "operational_defect_rate"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_seller_performance",
+              "name": "seller_id"
+            },
+            {
+              "source_model": "mart_seller_performance",
+              "name": "calendar_date"
+            },
+            {
+              "source_model": "mart_seller_performance",
+              "name": "operational_defect_orders_count"
+            },
+            {
+              "source_model": "mart_seller_performance",
+              "name": "orders_count"
+            },
+            {
+              "source_model": "dim_seller",
+              "name": "seller_city"
+            },
+            {
+              "source_model": "dim_seller",
+              "name": "seller_state"
+            }
+          ],
+          "filter_names": [
+            "date_range",
+            "seller_id",
+            "seller_state"
+          ],
+          "derived_columns": [
+            {
+              "name": "seller_label",
+              "description": "Display label built as city + state + seller_id, with fallback to seller_id when seller dimension attributes are missing.",
+              "source_columns": [
+                {
+                  "source_model": "mart_seller_performance",
+                  "name": "seller_id"
+                },
+                {
+                  "source_model": "dim_seller",
+                  "name": "seller_city"
+                },
+                {
+                  "source_model": "dim_seller",
+                  "name": "seller_state"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Fulfillment Operations",
+      "exposure_name": "fulfillment_operations_dashboard",
+      "primary_model": "mart_fulfillment_ops",
+      "collection_path": [
+        "MerchantPulse",
+        "Fulfillment Ops"
+      ],
+      "screenshot_path": "dashboards/screenshots/fulfillment_operations_v1.svg",
+      "narrative_intent": "Explain where delivery friction is happening and which external context signals line up with the late-order population.",
+      "dashboard_copy": [
+        "Weather fields are proxy delivery-weather context, not customer-level geospatial truth.",
+        "Late delivery metrics are nullable when a slice has no delivered orders.",
+        "Holiday context comes from dim_date and stays conformed across warehouse layers."
+      ],
+      "filters": [
+        {
+          "name": "date_range",
+          "label": "Purchase Date",
+          "variable": "date_range",
+          "type": "field_filter",
+          "source_model": "mart_fulfillment_ops",
+          "field_name": "purchase_date"
+        },
+        {
+          "name": "customer_state",
+          "label": "Customer State",
+          "variable": "customer_state",
+          "type": "field_filter",
+          "source_model": "mart_fulfillment_ops",
+          "field_name": "customer_state"
+        },
+        {
+          "name": "delivery_delay_bucket",
+          "label": "Delay Bucket",
+          "variable": "delivery_delay_bucket",
+          "type": "field_filter",
+          "source_model": "mart_fulfillment_ops",
+          "field_name": "delivery_delay_bucket"
+        },
+        {
+          "name": "holiday_flag",
+          "label": "Purchase Holiday",
+          "variable": "holiday_flag",
+          "type": "field_filter",
+          "source_model": "mart_fulfillment_ops",
+          "field_name": "is_purchase_on_holiday"
+        }
+      ],
+      "cards": [
+        {
+          "id": "fulfillment_delay_rate_by_state",
+          "title": "Delay Rate by Customer State",
+          "sql_path": "dashboards/sql/core_trio/fulfillment/fulfillment_delay_rate_by_state.sql",
+          "visualization": "map",
+          "source_model": "mart_fulfillment_ops",
+          "allowed_join_models": [],
+          "narrative_intent": "Shows which regions carry the highest delivery-risk burden after weighting the full order population.",
+          "output_columns": [
+            "customer_state",
+            "orders_count",
+            "late_orders_count",
+            "delivered_orders_count",
+            "late_delivery_rate"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "purchase_date"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "customer_state"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "delivery_delay_bucket"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "is_purchase_on_holiday"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "orders_count"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "late_orders_count"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "delivered_orders_count"
+            }
+          ],
+          "filter_names": [
+            "date_range",
+            "customer_state",
+            "delivery_delay_bucket",
+            "holiday_flag"
+          ]
+        },
+        {
+          "id": "fulfillment_delay_bucket_distribution",
+          "title": "Delay Bucket Distribution",
+          "sql_path": "dashboards/sql/core_trio/fulfillment/fulfillment_delay_bucket_distribution.sql",
+          "visualization": "bar",
+          "source_model": "mart_fulfillment_ops",
+          "allowed_join_models": [],
+          "narrative_intent": "Shows how much of the order population falls into each delay severity bucket.",
+          "output_columns": [
+            "delivery_delay_bucket",
+            "orders_count"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "purchase_date"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "customer_state"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "delivery_delay_bucket"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "is_purchase_on_holiday"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "orders_count"
+            }
+          ],
+          "filter_names": [
+            "date_range",
+            "customer_state",
+            "delivery_delay_bucket",
+            "holiday_flag"
+          ]
+        },
+        {
+          "id": "fulfillment_holiday_impact",
+          "title": "Holiday Impact",
+          "sql_path": "dashboards/sql/core_trio/fulfillment/fulfillment_holiday_impact.sql",
+          "visualization": "line",
+          "source_model": "mart_fulfillment_ops",
+          "allowed_join_models": [],
+          "narrative_intent": "Tests whether holiday purchase cohorts change demand volume or late-order risk.",
+          "output_columns": [
+            "purchase_date",
+            "is_purchase_on_holiday",
+            "orders_count",
+            "late_delivery_rate"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "purchase_date"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "customer_state"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "delivery_delay_bucket"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "is_purchase_on_holiday"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "orders_count"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "late_orders_count"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "delivered_orders_count"
+            }
+          ],
+          "filter_names": [
+            "date_range",
+            "customer_state",
+            "delivery_delay_bucket",
+            "holiday_flag"
+          ]
+        },
+        {
+          "id": "fulfillment_proxy_weather_impact",
+          "title": "Proxy Weather Impact",
+          "sql_path": "dashboards/sql/core_trio/fulfillment/fulfillment_proxy_weather_impact.sql",
+          "visualization": "scatter",
+          "source_model": "mart_fulfillment_ops",
+          "allowed_join_models": [],
+          "narrative_intent": "Keeps the weather story honest by using proxy delivery-day context and explicit order weighting.",
+          "output_columns": [
+            "purchase_date",
+            "avg_delivery_precipitation_total",
+            "avg_delivery_temperature_max",
+            "late_delivery_rate",
+            "orders_count"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "purchase_date"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "customer_state"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "delivery_delay_bucket"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "is_purchase_on_holiday"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "avg_delivery_precipitation_total"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "avg_delivery_temperature_max"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "orders_count"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "late_orders_count"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "delivered_orders_count"
+            }
+          ],
+          "filter_names": [
+            "date_range",
+            "customer_state",
+            "delivery_delay_bucket",
+            "holiday_flag"
+          ]
+        },
+        {
+          "id": "fulfillment_avg_late_days_by_state",
+          "title": "Average Late Days by State",
+          "sql_path": "dashboards/sql/core_trio/fulfillment/fulfillment_avg_late_days_by_state.sql",
+          "visualization": "bar",
+          "source_model": "mart_fulfillment_ops",
+          "allowed_join_models": [],
+          "narrative_intent": "Highlights severity, not just incidence, for late-delivery regions.",
+          "output_columns": [
+            "customer_state",
+            "avg_late_days",
+            "late_orders_count"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "purchase_date"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "customer_state"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "delivery_delay_bucket"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "is_purchase_on_holiday"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "avg_late_days"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "late_orders_count"
+            }
+          ],
+          "filter_names": [
+            "date_range",
+            "customer_state",
+            "delivery_delay_bucket",
+            "holiday_flag"
+          ]
+        },
+        {
+          "id": "fulfillment_cancelled_order_trend",
+          "title": "Cancelled Order Trend",
+          "sql_path": "dashboards/sql/core_trio/fulfillment/fulfillment_cancelled_order_trend.sql",
+          "visualization": "line",
+          "source_model": "mart_fulfillment_ops",
+          "allowed_join_models": [],
+          "narrative_intent": "Shows how pre-delivery attrition moves alongside fulfillment stress.",
+          "output_columns": [
+            "purchase_date",
+            "cancelled_orders_count"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "purchase_date"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "customer_state"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "delivery_delay_bucket"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "is_purchase_on_holiday"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "cancelled_orders_count"
+            }
+          ],
+          "filter_names": [
+            "date_range",
+            "customer_state",
+            "delivery_delay_bucket",
+            "holiday_flag"
+          ]
+        }
+      ]
+    }
+  ]
+}

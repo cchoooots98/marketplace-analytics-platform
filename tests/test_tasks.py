@@ -109,12 +109,217 @@ def test_dbt_commands_use_project_working_directory(
     assert tasks.main(["dbt-parse"]) == 0
     assert tasks.main(["dbt-freshness"]) == 0
     assert tasks.main(["dbt-snapshot"]) == 0
+    assert tasks.main(["dbt-build"]) == 0
 
     assert captured_calls == [
         (["dbt", "debug"], tmp_path / "marketplace_analytics_dbt"),
         (["dbt", "parse"], tmp_path / "marketplace_analytics_dbt"),
         (["dbt", "source", "freshness"], tmp_path / "marketplace_analytics_dbt"),
         (["dbt", "snapshot"], tmp_path / "marketplace_analytics_dbt"),
+        (["dbt", "build"], tmp_path / "marketplace_analytics_dbt"),
+    ]
+
+
+def test_dbt_build_passes_arguments_through_to_dbt_cli(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Validate dbt-build forwards extra CLI arguments unchanged.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing subprocess execution.
+        tmp_path: Pytest fixture providing a temporary repository root.
+
+    Returns:
+        None.
+    """
+    monkeypatch.setattr(tasks, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(tasks, "_resolve_script_command", lambda _: ["dbt"])
+    captured_calls: list[tuple[list[str], Path | None]] = []
+
+    def fake_run_subprocess(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        repo_root: Path | None = None,
+    ) -> int:
+        captured_calls.append((command, cwd))
+        return 0
+
+    monkeypatch.setattr(tasks, "_run_subprocess", fake_run_subprocess)
+
+    assert (
+        tasks.main(
+            [
+                "dbt-build",
+                "--select",
+                "mart_exec_daily",
+                "--target-path",
+                "target_ci",
+            ]
+        )
+        == 0
+    )
+
+    assert captured_calls == [
+        (
+            [
+                "dbt",
+                "build",
+                "--select",
+                "mart_exec_daily",
+                "--target-path",
+                "target_ci",
+            ],
+            tmp_path / "marketplace_analytics_dbt",
+        ),
+    ]
+
+
+def test_dashboard_validate_command_uses_expected_wrapper(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Validate dashboard validation uses the intended CLI wrapper.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing subprocess execution.
+        tmp_path: Pytest fixture providing a temporary repository root.
+
+    Returns:
+        None.
+    """
+    monkeypatch.setattr(tasks, "REPO_ROOT", tmp_path)
+    captured_calls: list[tuple[list[str], Path | None]] = []
+
+    def fake_run_subprocess(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        repo_root: Path | None = None,
+    ) -> int:
+        captured_calls.append((command, cwd))
+        return 0
+
+    monkeypatch.setattr(tasks, "_run_subprocess", fake_run_subprocess)
+
+    assert (
+        tasks.main(["dashboard-validate", "--manifest", "target_ci/manifest.json"]) == 0
+    )
+
+    assert captured_calls == [
+        (
+            [
+                sys.executable,
+                "-m",
+                "dashboards.validation",
+                "--manifest",
+                "target_ci/manifest.json",
+            ],
+            None,
+        ),
+    ]
+
+
+def test_metabase_up_command_uses_expected_wrapper(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Validate Metabase startup uses the intended Docker Compose wrapper.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing subprocess execution.
+        tmp_path: Pytest fixture providing a temporary repository root.
+
+    Returns:
+        None.
+    """
+    monkeypatch.setattr(tasks, "REPO_ROOT", tmp_path)
+    captured_calls: list[tuple[list[str], Path | None]] = []
+
+    def fake_run_subprocess(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        repo_root: Path | None = None,
+    ) -> int:
+        captured_calls.append((command, cwd))
+        return 0
+
+    monkeypatch.setattr(tasks, "_run_subprocess", fake_run_subprocess)
+
+    assert tasks.main(["metabase-up"]) == 0
+
+    assert captured_calls == [
+        (["docker", "compose", "up", "-d"], None),
+    ]
+
+
+def test_metabase_down_command_uses_expected_wrapper(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Validate Metabase shutdown uses the intended Docker Compose wrapper.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing subprocess execution.
+        tmp_path: Pytest fixture providing a temporary repository root.
+
+    Returns:
+        None.
+    """
+    monkeypatch.setattr(tasks, "REPO_ROOT", tmp_path)
+    captured_calls: list[tuple[list[str], Path | None]] = []
+
+    def fake_run_subprocess(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        repo_root: Path | None = None,
+    ) -> int:
+        captured_calls.append((command, cwd))
+        return 0
+
+    monkeypatch.setattr(tasks, "_run_subprocess", fake_run_subprocess)
+
+    assert tasks.main(["metabase-down"]) == 0
+
+    assert captured_calls == [
+        (["docker", "compose", "down"], None),
+    ]
+
+
+def test_metabase_logs_command_uses_expected_wrapper(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Validate Metabase logs use the intended Docker Compose wrapper.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing subprocess execution.
+        tmp_path: Pytest fixture providing a temporary repository root.
+
+    Returns:
+        None.
+    """
+    monkeypatch.setattr(tasks, "REPO_ROOT", tmp_path)
+    captured_calls: list[tuple[list[str], Path | None]] = []
+
+    def fake_run_subprocess(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        repo_root: Path | None = None,
+    ) -> int:
+        captured_calls.append((command, cwd))
+        return 0
+
+    monkeypatch.setattr(tasks, "_run_subprocess", fake_run_subprocess)
+
+    assert tasks.main(["metabase-logs"]) == 0
+
+    assert captured_calls == [
+        (["docker", "compose", "logs", "--tail", "120", "metabase"], None),
     ]
 
 

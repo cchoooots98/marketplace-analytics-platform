@@ -12,7 +12,7 @@ BigQuery.
 | BigQuery profile | Must be configured locally before `dbt debug`, `dbt test`, or `dbt build` |
 | Staging models | Implemented with schema tests |
 | Intermediate models | Implemented with schema and singular tests |
-| Conformed dimensions and facts | Implemented with enterprise-style contracts |
+| Conformed dimensions and facts | Implemented with dbt model contracts |
 | Governed marts | Implemented for executive, seller operations, seller experience, fulfillment, and customer-experience reporting |
 | dbt docs | Model and column descriptions are maintained in the project |
 | dbt snapshots | Implemented for seller and product history tracking |
@@ -185,9 +185,10 @@ one contract.
 
 ## Incremental Materialization
 
-`fact_orders` is materialized incrementally to demonstrate a production-style
-pattern for growing transactional facts. Other marts rebuild as tables because
-they are derived from the governed fact layer.
+`fact_orders` is materialized incrementally so the model scales with growing
+order history instead of rebuilding the full table on every run. Other marts
+rebuild as tables because they are derived from the governed fact layer and
+their sizes remain bounded.
 
 | Config | Value | Why |
 |---|---|---|
@@ -226,6 +227,7 @@ python tasks.py dbt-debug
 python tasks.py dbt-parse
 python tasks.py dbt-freshness
 python tasks.py dbt-snapshot
+python tasks.py dbt-build
 ```
 
 Direct dbt equivalents from this folder remain available when you need more
