@@ -23,7 +23,6 @@ jobs:
       BQ_INTERMEDIATE_DATASET: ${{ secrets.BQ_INTERMEDIATE_DATASET }}
       BQ_MARTS_DATASET: ${{ secrets.BQ_MARTS_DATASET }}
       BQ_SNAPSHOTS_DATASET: ${{ secrets.BQ_SNAPSHOTS_DATASET }}
-      GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcp-service-account.json
 
     steps:
       - name: Check runtime configuration
@@ -53,6 +52,8 @@ jobs:
       - name: Write service account key
         if: steps.config.outputs.enabled == 'true'
         run: |
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/gcp-service-account.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$GOOGLE_APPLICATION_CREDENTIALS" >> "$GITHUB_ENV"
           cat <<'EOF' > "${GOOGLE_APPLICATION_CREDENTIALS}"
           ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
           EOF
