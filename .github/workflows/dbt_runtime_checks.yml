@@ -12,7 +12,6 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: marketplace_analytics_dbt
 
     env:
       GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -46,7 +45,7 @@ jobs:
 
       - name: Install base dependencies
         if: steps.config.outputs.enabled == 'true'
-        run: pip install -r ../requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Write service account key
         if: steps.config.outputs.enabled == 'true'
@@ -68,28 +67,32 @@ jobs:
               runtime:
                 type: bigquery
                 method: service-account
-                keyfile: {{ env_var('GOOGLE_APPLICATION_CREDENTIALS') }}
-                project: {{ env_var('GCP_PROJECT_ID') }}
-                dataset: {{ env_var('BQ_STAGING_DATASET', 'staging') }}
+                keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS') }}"
+                project: "{{ env_var('GCP_PROJECT_ID') }}"
+                dataset: "{{ env_var('BQ_STAGING_DATASET', 'staging') }}"
                 threads: 4
-                location: {{ env_var('BIGQUERY_LOCATION', 'EU') }}
+                location: "{{ env_var('BIGQUERY_LOCATION', 'EU') }}"
                 priority: interactive
           EOF
 
       - name: Install dbt packages
         if: steps.config.outputs.enabled == 'true'
+        working-directory: marketplace_analytics_dbt
         run: dbt deps
 
       - name: Run source freshness
         if: steps.config.outputs.enabled == 'true'
+        working-directory: marketplace_analytics_dbt
         run: dbt source freshness --profiles-dir "$RUNNER_TEMP/dbt-profile" --target runtime --target-path target_runtime
 
       - name: Run snapshots
         if: steps.config.outputs.enabled == 'true'
+        working-directory: marketplace_analytics_dbt
         run: dbt snapshot --select snap_sellers snap_products --profiles-dir "$RUNNER_TEMP/dbt-profile" --target runtime --target-path target_runtime
 
       - name: Run runtime dbt tests
         if: steps.config.outputs.enabled == 'true'
+        working-directory: marketplace_analytics_dbt
         run: >
           dbt test
           --profiles-dir "$RUNNER_TEMP/dbt-profile"
@@ -107,4 +110,5 @@ jobs:
 
       - name: Clean local dbt artifacts
         if: always() && steps.config.outputs.enabled == 'true'
+        working-directory: marketplace_analytics_dbt
         run: rm -rf target target_* logs
