@@ -2,46 +2,37 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
-import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date
-from typing import Any, Sequence
+from typing import Any
 
 import pandas as pd
 import requests
-from dotenv import load_dotenv
 from google.cloud import bigquery
 
 from ingestion.utils.batch_metadata import add_batch_metadata, build_batch_metadata
 from ingestion.utils.bigquery_client import (
     BigQueryWriteResult,
     WriteMode,
-    create_bigquery_client,
+    BigQueryWriteResultState,
     write_dataframe_to_bigquery,
 )
 from ingestion.utils.date_range import (
     parse_date,
     validate_date_range,
 )
-from ingestion.utils.runtime_config import (
-    CLI_HANDLED_EXCEPTIONS,
-    configure_google_application_credentials,
-    configure_logging_from_env,
-    log_cli_failure,
-    require_cli_value,
-)
 from ingestion.utils.http import build_retry_session
+from ingestion.utils.table_targets import BigQueryDatasetRole, resolve_table_id
 
 logger = logging.getLogger(__name__)
 
 NAGER_PUBLIC_HOLIDAYS_URL = (
     "https://date.nager.at/api/v3/PublicHolidays/{year}/{country_code}"
 )
-RAW_HOLIDAYS_TABLE_ID = "raw_ext.holidays"
+RAW_HOLIDAYS_TABLE_ID = resolve_table_id("holidays", BigQueryDatasetRole.RAW_EXT)
 DEFAULT_COUNTRY_CODE = "BR"
 DEFAULT_WRITE_MODE: WriteMode = "replace"
 DEFAULT_TIMEOUT_SECONDS = 30
@@ -225,6 +216,7 @@ def load_holidays(
     country_code: str = DEFAULT_COUNTRY_CODE,
     table_id: str = RAW_HOLIDAYS_TABLE_ID,
     write_mode: WriteMode = DEFAULT_WRITE_MODE,
+    allow_empty: bool = False,
     client: bigquery.Client | None = None,
     project_id: str | None = None,
     location: str | None = None,
@@ -238,6 +230,8 @@ def load_holidays(
         country_code: ISO 3166-1 alpha-2 country code.
         table_id: Destination BigQuery table ID.
         write_mode: BigQuery write behavior.
+        allow_empty: When true, an empty holiday range becomes a successful
+            no-op result instead of an error.
         client: Optional preconfigured BigQuery client.
         project_id: Optional Google Cloud project ID used when creating a client.
         location: Optional BigQuery job location such as "EU" or "US".
@@ -260,6 +254,23 @@ def load_holidays(
     )
     holidays_dataframe = normalize_holidays(holiday_records)
     if holidays_dataframe.empty:
+        if allow_empty:
+            logger.info(
+                "No holidays returned for requested range country_code=%s "
+                "start_date=%s end_date=%s; treating as a successful no-op",
+                normalized_country_code,
+                start_date,
+                end_date,
+            )
+            return BigQueryWriteResult(
+                table_id=table_id,
+                write_mode=write_mode,
+                result_state=BigQueryWriteResultState.NO_OP,
+                job_id=None,
+                input_rows=0,
+                input_columns=0,
+                loaded_rows=0,
+            )
         msg = (
             "No holidays returned for requested range "
             f"country_code={normalized_country_code} start_date={start_date} "
@@ -301,65 +312,6 @@ def load_holidays(
     return write_result
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Run the holiday loader from the command line.
-
-    Args:
-        argv: Optional command-line argument sequence.
-
-    Returns:
-        Process exit code.
-    """
-    load_dotenv()
-
-    parser = argparse.ArgumentParser(
-        description="Load public holidays into BigQuery raw."
-    )
-    parser.add_argument("--start-date", required=True)
-    parser.add_argument("--end-date", required=True)
-    parser.add_argument("--country-code", default=os.getenv("NAGER_COUNTRY_CODE", "BR"))
-    parser.add_argument("--table-id", default=RAW_HOLIDAYS_TABLE_ID)
-    parser.add_argument(
-        "--write-mode",
-        choices=("append", "replace"),
-        default=DEFAULT_WRITE_MODE,
-    )
-    parser.add_argument("--project-id", default=os.getenv("GCP_PROJECT_ID"))
-    parser.add_argument("--location", default=os.getenv("BIGQUERY_LOCATION"))
-    parser.add_argument(
-        "--credentials-path",
-        default=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
-    )
-    parsed_args = parser.parse_args(argv)
-    configure_logging_from_env()
-
-    try:
-        start_date = parse_date(parsed_args.start_date)
-        end_date = parse_date(parsed_args.end_date)
-        validate_date_range(start_date, end_date)
-        project_id = require_cli_value(parsed_args.project_id, "GCP_PROJECT_ID")
-        location = require_cli_value(parsed_args.location, "BIGQUERY_LOCATION")
-        configure_google_application_credentials(parsed_args.credentials_path)
-        bigquery_client = create_bigquery_client(
-            project_id=project_id,
-            location=location,
-        )
-        load_holidays(
-            start_date,
-            end_date,
-            country_code=parsed_args.country_code,
-            table_id=parsed_args.table_id,
-            write_mode=parsed_args.write_mode,
-            client=bigquery_client,
-            project_id=project_id,
-            location=location,
-        )
-    except CLI_HANDLED_EXCEPTIONS as exc:
-        return log_cli_failure(logger, "Holiday ingestion", exc)
-
-    return 0
-
-
 def normalize_country_code(country_code: str) -> str:
     """Normalize and validate an ISO alpha-2 country code.
 
@@ -399,7 +351,3 @@ def _managed_requests_session(
 
     with build_retry_session() as managed_session:
         yield managed_session
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

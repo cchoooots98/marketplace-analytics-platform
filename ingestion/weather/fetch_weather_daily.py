@@ -2,25 +2,22 @@
 
 from __future__ import annotations
 
-import argparse
 import logging
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Sequence
+from typing import Any
 from collections.abc import Iterator
 
 import pandas as pd
 import requests
-from dotenv import load_dotenv
 from google.cloud import bigquery
 
 from ingestion.utils.batch_metadata import add_batch_metadata, build_batch_metadata
 from ingestion.utils.bigquery_client import (
     BigQueryWriteResult,
     WriteMode,
-    create_bigquery_client,
     write_dataframe_to_bigquery,
 )
 from ingestion.utils.date_range import (
@@ -29,21 +26,23 @@ from ingestion.utils.date_range import (
     parse_date,
     validate_date_range,
 )
-from ingestion.utils.runtime_config import (
-    CLI_HANDLED_EXCEPTIONS,
-    configure_google_application_credentials,
-    configure_logging_from_env,
-    log_cli_failure,
-    require_cli_value,
-)
 from ingestion.utils.http import build_retry_session
+from ingestion.utils.table_targets import BigQueryDatasetRole, resolve_table_id
+from ingestion.utils.validation import (
+    normalize_optional_text,
+    parse_required_float,
+    parse_required_int,
+)
 
 logger = logging.getLogger(__name__)
 
 OPENWEATHER_DAILY_SUMMARY_URL = (
     "https://api.openweathermap.org/data/3.0/onecall/day_summary"
 )
-RAW_WEATHER_DAILY_TABLE_ID = "raw_ext.weather_daily"
+RAW_WEATHER_DAILY_TABLE_ID = resolve_table_id(
+    "weather_daily",
+    BigQueryDatasetRole.RAW_EXT,
+)
 DEFAULT_LOCATION_KEY = "sao_paulo"
 DEFAULT_UNITS = "metric"
 DEFAULT_LANG = "en"
@@ -152,8 +151,11 @@ def build_weather_config_from_env(
 
     return WeatherDailyConfig(
         api_key=str(resolved_api_key or "").strip(),
-        latitude=_parse_float(resolved_latitude, "OPENWEATHER_LATITUDE"),
-        longitude=_parse_float(resolved_longitude, "OPENWEATHER_LONGITUDE"),
+        latitude=parse_required_float(resolved_latitude, "OPENWEATHER_LATITUDE"),
+        longitude=parse_required_float(
+            resolved_longitude,
+            "OPENWEATHER_LONGITUDE",
+        ),
         location_key=str(
             _first_present(
                 location_key,
@@ -167,14 +169,17 @@ def build_weather_config_from_env(
         lang=str(
             _first_present(lang, os.getenv("OPENWEATHER_LANG"), DEFAULT_LANG)
         ).strip(),
-        timezone_offset=_normalize_optional_text(
+        timezone_offset=normalize_optional_text(
             _first_present(
                 timezone_offset,
                 os.getenv("OPENWEATHER_TIMEZONE_OFFSET"),
                 DEFAULT_TIMEZONE_OFFSET,
             )
         ),
-        max_api_calls=_parse_int(resolved_max_calls, "OPENWEATHER_MAX_CALLS_PER_RUN"),
+        max_api_calls=parse_required_int(
+            resolved_max_calls,
+            "OPENWEATHER_MAX_CALLS_PER_RUN",
+        ),
     )
 
 
@@ -504,142 +509,12 @@ def load_weather_daily(
     return write_result
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Run the weather daily loader from the command line.
-
-    Args:
-        argv: Optional command-line argument sequence.
-
-    Returns:
-        Process exit code.
-    """
-    load_dotenv()
-
-    parser = argparse.ArgumentParser(
-        description="Load OpenWeather daily summaries into BigQuery raw."
-    )
-    parser.add_argument("--start-date", required=True)
-    parser.add_argument("--end-date", required=True)
-    parser.add_argument("--table-id", default=RAW_WEATHER_DAILY_TABLE_ID)
-    parser.add_argument(
-        "--write-mode",
-        choices=("append", "replace"),
-        default=DEFAULT_WRITE_MODE,
-    )
-    parser.add_argument("--project-id", default=os.getenv("GCP_PROJECT_ID"))
-    parser.add_argument("--location", default=os.getenv("BIGQUERY_LOCATION"))
-    parser.add_argument(
-        "--credentials-path",
-        default=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
-    )
-    parser.add_argument("--api-key", default=os.getenv("OPENWEATHER_API_KEY"))
-    parser.add_argument("--latitude", default=os.getenv("OPENWEATHER_LATITUDE"))
-    parser.add_argument("--longitude", default=os.getenv("OPENWEATHER_LONGITUDE"))
-    parser.add_argument(
-        "--location-key",
-        default=os.getenv("OPENWEATHER_LOCATION_KEY", DEFAULT_LOCATION_KEY),
-    )
-    parser.add_argument(
-        "--units", default=os.getenv("OPENWEATHER_UNITS", DEFAULT_UNITS)
-    )
-    parser.add_argument("--lang", default=os.getenv("OPENWEATHER_LANG", DEFAULT_LANG))
-    parser.add_argument(
-        "--timezone-offset",
-        default=os.getenv("OPENWEATHER_TIMEZONE_OFFSET", DEFAULT_TIMEZONE_OFFSET),
-    )
-    parser.add_argument(
-        "--max-api-calls",
-        default=os.getenv("OPENWEATHER_MAX_CALLS_PER_RUN", DEFAULT_MAX_API_CALLS),
-    )
-    parsed_args = parser.parse_args(argv)
-    configure_logging_from_env()
-
-    try:
-        start_date = parse_date(parsed_args.start_date)
-        end_date = parse_date(parsed_args.end_date)
-        validate_date_range(start_date, end_date)
-        project_id = require_cli_value(parsed_args.project_id, "GCP_PROJECT_ID")
-        location = require_cli_value(parsed_args.location, "BIGQUERY_LOCATION")
-        configure_google_application_credentials(parsed_args.credentials_path)
-        weather_config = build_weather_config_from_env(
-            api_key=parsed_args.api_key,
-            latitude=parsed_args.latitude,
-            longitude=parsed_args.longitude,
-            location_key=parsed_args.location_key,
-            units=parsed_args.units,
-            lang=parsed_args.lang,
-            timezone_offset=parsed_args.timezone_offset,
-            max_api_calls=parsed_args.max_api_calls,
-        )
-        validate_weather_api_budget(
-            start_date,
-            end_date,
-            weather_config.max_api_calls,
-        )
-        bigquery_client = create_bigquery_client(
-            project_id=project_id,
-            location=location,
-        )
-        load_weather_daily(
-            start_date,
-            end_date,
-            weather_config,
-            table_id=parsed_args.table_id,
-            write_mode=parsed_args.write_mode,
-            client=bigquery_client,
-            project_id=project_id,
-            location=location,
-        )
-    except CLI_HANDLED_EXCEPTIONS as exc:
-        return log_cli_failure(logger, "Weather daily ingestion", exc)
-
-    return 0
-
-
 def _first_present(*values: object) -> object | None:
     """Return the first value that is not None."""
     for value in values:
         if value is not None:
             return value
     return None
-
-
-def _parse_float(value: object | None, field_name: str) -> float:
-    """Parse a required float configuration value."""
-    if value is None or not str(value).strip():
-        msg = f"{field_name} is required"
-        raise ValueError(msg)
-
-    try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
-        msg = f"{field_name} must be a valid number"
-        raise ValueError(msg) from exc
-
-
-def _parse_int(value: object | None, field_name: str) -> int:
-    """Parse a required integer configuration value."""
-    if value is None or not str(value).strip():
-        msg = f"{field_name} is required"
-        raise ValueError(msg)
-
-    try:
-        return int(value)
-    except (TypeError, ValueError) as exc:
-        msg = f"{field_name} must be a valid integer"
-        raise ValueError(msg) from exc
-
-
-def _normalize_optional_text(value: object | None) -> str | None:
-    """Normalize optional text configuration values."""
-    if value is None:
-        return None
-
-    normalized_value = str(value).strip()
-    if not normalized_value:
-        return None
-
-    return normalized_value
 
 
 def _nested_value(record: dict[str, object], *path: str) -> object | None:
@@ -664,7 +539,3 @@ def _managed_requests_session(
 
     with build_retry_session() as managed_session:
         yield managed_session
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
