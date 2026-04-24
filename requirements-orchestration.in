@@ -1,4 +1,4 @@
--r requirements.in
+-r requirements.txt
 
 apache-airflow
 apache-airflow-providers-google

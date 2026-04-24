@@ -43,6 +43,7 @@ marketplace_analytics_dbt/logs/
 # Airflow
 airflow/logs/
 airflow/airflow.db
+airflow/config/airflow.cfg
 
 # Build / temp
 build/
@@ -51,6 +52,7 @@ tmp/
 .cache/
 AppData/
 pip/
+.docker/
 
 # Data and local artifacts
 data/

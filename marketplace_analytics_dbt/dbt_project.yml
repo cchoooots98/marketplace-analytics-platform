@@ -15,6 +15,7 @@ target-path: "target"
 clean-targets:
   - "target"
   - "dbt_packages"
+packages-install-path: "{{ env_var('DBT_PACKAGES_INSTALL_PATH', 'dbt_packages') }}"
 
 # Project-level vars. Exposed as dbt vars so threshold tuning happens in one
 # place and documentation / tests can cite the same value.
