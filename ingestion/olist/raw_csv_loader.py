@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import argparse
 import logging
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 import pandas as pd
-from dotenv import load_dotenv
 from google.cloud import bigquery
 
 from ingestion.utils.batch_metadata import (
@@ -22,16 +18,9 @@ from ingestion.utils.batch_metadata import (
 from ingestion.utils.bigquery_client import (
     BigQueryWriteResult,
     WriteMode,
-    create_bigquery_client,
     write_dataframe_to_bigquery,
 )
-from ingestion.utils.runtime_config import (
-    CLI_HANDLED_EXCEPTIONS,
-    configure_google_application_credentials,
-    configure_logging_from_env,
-    log_cli_failure,
-    require_cli_value,
-)
+from ingestion.utils.table_targets import BigQueryDatasetRole, resolve_table_id
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +33,15 @@ class OlistRawTableSpec:
 
     Args:
         source_name: Human-readable Olist source name used in logs and errors.
-        table_id: BigQuery raw destination table ID.
+        table_name: Logical raw destination table name.
+        dataset_role: Logical dataset role for destination resolution.
         required_columns: Standardized source columns required before loading.
         default_file_name: Expected local CSV file name for CLI help text.
     """
 
     source_name: str
-    table_id: str
+    table_name: str
+    dataset_role: BigQueryDatasetRole
     required_columns: frozenset[str]
     default_file_name: str
 
@@ -64,8 +55,8 @@ class OlistRawTableSpec:
             msg = "source_name cannot be empty"
             raise ValueError(msg)
 
-        if not self.table_id.strip():
-            msg = "table_id cannot be empty"
+        if not self.table_name.strip():
+            msg = "table_name cannot be empty"
             raise ValueError(msg)
 
         if not self.required_columns:
@@ -75,6 +66,10 @@ class OlistRawTableSpec:
         if not self.default_file_name.strip():
             msg = "default_file_name cannot be empty"
             raise ValueError(msg)
+
+    def resolve_table_id(self) -> str:
+        """Resolve the configured raw target table ID."""
+        return resolve_table_id(self.table_name, self.dataset_role)
 
 
 def prepare_raw_dataframe(
@@ -113,6 +108,7 @@ def load_raw_csv(
     *,
     table_id: str | None = None,
     write_mode: WriteMode = DEFAULT_WRITE_MODE,
+    metadata: BatchMetadata | None = None,
     client: bigquery.Client | None = None,
     project_id: str | None = None,
     location: str | None = None,
@@ -124,6 +120,9 @@ def load_raw_csv(
         spec: Raw table source contract.
         table_id: Optional override destination table ID.
         write_mode: BigQuery write behavior.
+        metadata: Optional caller-provided batch metadata. Useful for
+            incremental orchestration that needs a stable batch identifier
+            derived from a landing batch contract instead of the file path.
         client: Optional preconfigured BigQuery client.
         project_id: Optional Google Cloud project ID used when creating a client.
         location: Optional BigQuery job location such as "EU" or "US".
@@ -137,8 +136,12 @@ def load_raw_csv(
         google.api_core.exceptions.GoogleAPIError: If BigQuery loading fails.
     """
     source_csv_path = Path(csv_path)
-    destination_table_id = table_id or spec.table_id
-    raw_dataframe = prepare_raw_dataframe(source_csv_path, spec)
+    destination_table_id = table_id or spec.resolve_table_id()
+    raw_dataframe = prepare_raw_dataframe(
+        source_csv_path,
+        spec,
+        metadata=metadata,
+    )
 
     logger.info(
         "Loading Olist raw table source_name=%s source_file_name=%s rows=%s "
@@ -166,68 +169,6 @@ def load_raw_csv(
         write_result.job_id,
     )
     return write_result
-
-
-def run_olist_loader(
-    argv: Sequence[str] | None,
-    spec: OlistRawTableSpec,
-) -> int:
-    """Run an Olist raw table loader from the command line.
-
-    Args:
-        argv: Optional command-line argument sequence.
-        spec: Raw table source contract.
-
-    Returns:
-        Process exit code.
-    """
-    load_dotenv()
-
-    parser = argparse.ArgumentParser(
-        description=f"Load Olist {spec.source_name} into BigQuery raw."
-    )
-    parser.add_argument("csv_path", help=f"Path to {spec.default_file_name}")
-    parser.add_argument("--table-id", default=spec.table_id)
-    parser.add_argument(
-        "--write-mode",
-        choices=("append", "replace"),
-        default=DEFAULT_WRITE_MODE,
-    )
-    parser.add_argument("--project-id", default=os.getenv("GCP_PROJECT_ID"))
-    parser.add_argument("--location", default=os.getenv("BIGQUERY_LOCATION"))
-    parser.add_argument(
-        "--credentials-path",
-        default=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
-        help=(
-            "Path to a Google service-account JSON file. Defaults to "
-            "GOOGLE_APPLICATION_CREDENTIALS when set."
-        ),
-    )
-    parsed_args = parser.parse_args(argv)
-
-    configure_logging_from_env()
-
-    try:
-        project_id = require_cli_value(parsed_args.project_id, "GCP_PROJECT_ID")
-        location = require_cli_value(parsed_args.location, "BIGQUERY_LOCATION")
-        configure_google_application_credentials(parsed_args.credentials_path)
-        bigquery_client = create_bigquery_client(
-            project_id=project_id,
-            location=location,
-        )
-        load_raw_csv(
-            parsed_args.csv_path,
-            spec,
-            table_id=parsed_args.table_id,
-            write_mode=parsed_args.write_mode,
-            client=bigquery_client,
-            project_id=project_id,
-            location=location,
-        )
-    except CLI_HANDLED_EXCEPTIONS as exc:
-        return log_cli_failure(logger, f"Olist {spec.source_name} ingestion", exc)
-
-    return 0
 
 
 def read_raw_csv(csv_path: str | Path, spec: OlistRawTableSpec) -> pd.DataFrame:

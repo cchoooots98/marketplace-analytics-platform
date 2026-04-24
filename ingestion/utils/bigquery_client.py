@@ -5,11 +5,15 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import asdict, dataclass
+from enum import StrEnum
 from typing import Literal
 
 import pandas as pd
+from google.api_core.exceptions import GoogleAPIError, NotFound
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import bigquery
+
+from ingestion.utils.validation import normalize_optional_text
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +25,13 @@ class BigQueryConfigurationError(RuntimeError):
     """Raised when BigQuery runtime configuration is missing or invalid."""
 
 
+class BigQueryWriteResultState(StrEnum):
+    """States for completed write helper calls."""
+
+    COMPLETED = "completed"
+    NO_OP = "no_op"
+
+
 @dataclass(frozen=True)
 class BigQueryWriteResult:
     """Structured summary of a BigQuery DataFrame load job.
@@ -28,6 +39,7 @@ class BigQueryWriteResult:
     Args:
         table_id: Destination table in dataset.table or project.dataset.table form.
         write_mode: Write behavior requested by the ingestion job.
+        result_state: Whether the helper completed a write or returned a no-op.
         job_id: BigQuery load job identifier, when returned by the API.
         input_rows: Number of rows received from the input DataFrame.
         input_columns: Number of columns received from the input DataFrame.
@@ -36,6 +48,7 @@ class BigQueryWriteResult:
 
     table_id: str
     write_mode: WriteMode
+    result_state: BigQueryWriteResultState
     job_id: str | None
     input_rows: int
     input_columns: int
@@ -70,8 +83,8 @@ def create_bigquery_client(
         BigQueryConfigurationError: If credentials cannot be discovered by the
             Google client library.
     """
-    normalized_project_id = _normalize_optional_text(project_id, "project_id")
-    normalized_location = _normalize_optional_text(location, "location")
+    normalized_project_id = _normalize_optional_text(project_id)
+    normalized_location = _normalize_optional_text(location)
 
     try:
         return bigquery.Client(
@@ -125,7 +138,7 @@ def write_dataframe_to_bigquery(
         project_id=project_id,
         location=location,
     )
-    normalized_location = _normalize_optional_text(location, "location")
+    normalized_location = _normalize_optional_text(location)
 
     logger.info(
         "Starting BigQuery DataFrame load table_id=%s write_mode=%s input_rows=%s",
@@ -157,6 +170,7 @@ def write_dataframe_to_bigquery(
         write_result = BigQueryWriteResult(
             table_id=normalized_table_id,
             write_mode=write_mode,
+            result_state=BigQueryWriteResultState.COMPLETED,
             job_id=getattr(load_job, "job_id", None),
             input_rows=len(dataframe.index),
             input_columns=len(dataframe.columns),
@@ -201,6 +215,7 @@ def _write_dataframe_with_atomic_replace(
         staging_table_id,
     )
     copy_job: object | None = None
+    primary_error: Exception | None = None
     try:
         staging_load_job = client.load_table_from_dataframe(
             dataframe,
@@ -219,19 +234,33 @@ def _write_dataframe_with_atomic_replace(
             location=location,
         )
         copy_job.result()
+    except GoogleAPIError as exc:
+        primary_error = exc
+        raise
     finally:
         try:
             client.delete_table(staging_table_id, not_found_ok=True)
-        except Exception as cleanup_exc:
-            logger.warning(
-                "Atomic swap staging cleanup failed staging_table_id=%s error=%s",
-                staging_table_id,
-                cleanup_exc,
-            )
+        except NotFound:
+            pass
+        except GoogleAPIError as cleanup_exc:
+            if primary_error is not None:
+                logger.warning(
+                    "Atomic swap staging cleanup failed after primary error "
+                    "staging_table_id=%s error=%s",
+                    staging_table_id,
+                    cleanup_exc,
+                )
+            else:
+                msg = (
+                    "Atomic swap staging cleanup failed after publish "
+                    f"staging_table_id={staging_table_id}"
+                )
+                raise RuntimeError(msg) from cleanup_exc
 
     return BigQueryWriteResult(
         table_id=table_id,
         write_mode="replace",
+        result_state=BigQueryWriteResultState.COMPLETED,
         job_id=getattr(copy_job, "job_id", None),
         input_rows=len(dataframe.index),
         input_columns=len(dataframe.columns),
@@ -276,17 +305,9 @@ def _get_loaded_rows(load_job: object, fallback_rows: int) -> int:
     return int(loaded_rows)
 
 
-def _normalize_optional_text(value: str | None, field_name: str) -> str | None:
+def _normalize_optional_text(value: str | None) -> str | None:
     """Normalize optional text configuration values."""
-    if value is None:
-        return None
-
-    normalized_value = value.strip()
-    if not normalized_value:
-        msg = f"{field_name} cannot be empty"
-        raise ValueError(msg)
-
-    return normalized_value
+    return normalize_optional_text(value)
 
 
 def _normalize_table_id(table_id: str) -> str:
