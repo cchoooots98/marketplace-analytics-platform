@@ -38,7 +38,10 @@ def test_airflow_dag_module_compiles_locally() -> None:
 )
 def test_airflow_dagbag_loads_expected_dags() -> None:
     """Validate the Airflow DAG file parses and exposes the expected DAG IDs."""
-    pytest.importorskip("airflow")
+    pytest.importorskip(
+        "airflow.models",
+        reason="Install Apache Airflow orchestration dependencies to run DAG parsing.",
+    )
     models = importlib.import_module("airflow.models")
     dagbag = models.DagBag(
         dag_folder=str(Path(__file__).resolve().parents[1] / "airflow" / "dags"),
