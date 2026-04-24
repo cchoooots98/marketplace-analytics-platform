@@ -131,7 +131,7 @@ prepared base, and marts are plated dishes for business users.
 |---|---|---|
 | Executive Overview | `mart_exec_daily` | GMV, orders, AOV, cancellation rate, late delivery rate, average review score |
 | Seller Operations | `mart_seller_performance` | seller GMV, late delivery rate, cancellation rate, operational defect rate |
-| Fulfillment Operations | `mart_fulfillment_ops` | delay rate by state, delay bucket mix, holiday impact, proxy weather impact, average late days |
+| Fulfillment Operations | `mart_fulfillment_ops` | delay rate by state, delay bucket mix, holiday impact, weather-bucket late rate, average late days |
 
 Roadmap expansion:
 

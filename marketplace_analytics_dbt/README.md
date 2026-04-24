@@ -132,6 +132,10 @@ fact_orders --------+--> mart_fulfillment_ops
 | `operational_defect_rate` | `operational_defect_orders_count / orders_count`, where an operational defect is cancelled OR late |
 | `review_coverage_rate` | `reviewed_attributable_orders_count / attributable_orders_count` on the seller-attributable subset |
 
+Derived rates and averages published in marts are convenience fields at the
+mart grain. Cross-period dashboard rollups should aggregate the corresponding
+mart-published support columns instead of averaging daily derived values.
+
 `low_review_score_threshold` is configured at the project level in
 `dbt_project.yml`.
 

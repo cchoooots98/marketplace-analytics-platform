@@ -1,8 +1,10 @@
 # Metric Definitions
 
 This document defines the canonical KPI rules for MerchantPulse. Dashboards
-must read these metrics from governed marts instead of rebuilding formulas in
-the business-intelligence layer.
+must read these metrics from governed marts instead of rejoining facts in the
+business-intelligence layer. When a dashboard rolls metrics across multiple
+mart rows, it must use the mart-published additive support columns instead of
+averaging precomputed rates or averages.
 
 ## Metric Rules
 
@@ -33,7 +35,8 @@ the business-intelligence layer.
 | `cancellation_rate` | `cancelled_orders_count / orders_count` | `calendar_date` | `mart_exec_daily` | Captures attrition without polluting GMV |
 | `late_delivery_rate` | `late_orders_count / delivered_orders_count` | `calendar_date` | `mart_exec_daily` | Nullable when there are no deliveries |
 | `reviews_count` | Count of review rows for orders in the purchase-date cohort | `calendar_date` | `mart_exec_daily` | Review-row count, not reviewed-order count |
-| `avg_review_score` | Average review score across review rows in the purchase-date cohort | `calendar_date` | `mart_exec_daily` | Purchase-date cohort, not review-created-date cohort |
+| `review_score_sum` | Sum of `review_score` across review rows in the purchase-date cohort | `calendar_date` | `mart_exec_daily` | Additive sentiment numerator for cross-period rollups |
+| `avg_review_score` | `review_score_sum / reviews_count` | `calendar_date` | `mart_exec_daily` | Convenience row-grain average; cross-period rollups should use `review_score_sum` plus `reviews_count` |
 
 `mart_exec_daily` intentionally emits only dates with at least one order. Zero-
 activity dates belong in `dim_date`, not in the executive KPI series.
@@ -83,7 +86,8 @@ Only orders with exactly one distinct seller are included in this contract.
 | `delivered_orders_count` | Count of delivered orders | `purchase_date, customer_state, delivery_delay_bucket` | `mart_fulfillment_ops` | Delivered orders only |
 | `late_orders_count` | Count of late delivered orders | `purchase_date, customer_state, delivery_delay_bucket` | `mart_fulfillment_ops` | Numerator for late delivery rate |
 | `cancelled_orders_count` | Count of cancelled orders | `purchase_date, customer_state, delivery_delay_bucket` | `mart_fulfillment_ops` | Tracks attrition without mixing in reviews |
-| `avg_late_days` | Average `late_days` among late orders only | `purchase_date, customer_state, delivery_delay_bucket` | `mart_fulfillment_ops` | Nullable when the slice has no late orders |
+| `late_days_sum` | Sum of `late_days` across late orders only | `purchase_date, customer_state, delivery_delay_bucket` | `mart_fulfillment_ops` | Additive severity numerator for cross-slice rollups |
+| `avg_late_days` | `late_days_sum / late_orders_count` | `purchase_date, customer_state, delivery_delay_bucket` | `mart_fulfillment_ops` | Convenience row-grain average; nullable when the slice has no late orders |
 | `late_delivery_rate` | `late_orders_count / delivered_orders_count` | `purchase_date, customer_state, delivery_delay_bucket` | `mart_fulfillment_ops` | Nullable when the slice has no delivered orders |
 
 ## Customer Experience Metrics
@@ -120,7 +124,9 @@ Facts and marts must reuse that logic rather than redefining bucket boundaries.
 | `customer_*_at_order` | Order-time customer geography snapshot used for historical analysis |
 | `is_purchase_on_holiday`, `holiday_name_at_purchase` | Purchase-date holiday context owned by `dim_date` and reused in delivery/facts/marts |
 | `delivery_weather_location_key` | Proxy delivery-weather location key, not customer-level geospatial precision |
-| `avg_delivery_temperature_*`, `avg_delivery_precipitation_total`, `avg_delivery_humidity_afternoon` | Order-weighted averages across the slice's delivery-date proxy weather distribution |
+| `delivery_temperature_*_sum`, `delivery_precipitation_total_sum`, `delivery_humidity_afternoon_sum` | Additive proxy weather numerators across orders with a non-null observation |
+| `delivery_temperature_*_observation_count`, `delivery_precipitation_total_observation_count`, `delivery_humidity_afternoon_observation_count` | Observation-count supports for proxy weather rollups |
+| `avg_delivery_temperature_*`, `avg_delivery_precipitation_total`, `avg_delivery_humidity_afternoon` | Convenience row-grain proxy weather averages derived from the corresponding sum and observation-count support columns |
 | Seller experience attribution | Seller review metrics are published only for single-seller attributable orders |
 
 ## Test Design

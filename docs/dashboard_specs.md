@@ -14,9 +14,8 @@ contracts:
 - `derived_columns`: optional human-readable provenance for display labels or calculated outputs whose source is not obvious from the result-set alone.
 
 In Metabase OSS, the saved-question publication step remains operator-managed.
-The checked-in screenshot artifacts under `dashboards/screenshots/` are
-reference captures until they are replaced with exported screenshots from a
-live Metabase instance.
+The checked-in screenshot artifacts under `dashboards/screenshots/` are the
+current exported reference captures from the live dashboard layouts.
 
 ## Dashboard 1: Executive Overview
 
@@ -26,7 +25,7 @@ live Metabase instance.
 | Primary mart | `mart_exec_daily` |
 | Grain | One row per calendar date in `mart_exec_daily` |
 | Collection | `MerchantPulse / Executive` |
-| Reference capture path | `dashboards/screenshots/executive_overview_v1.svg` |
+| Reference capture path | `dashboards/screenshots/executive_overview_final.png` |
 | Goal | Show revenue, demand, acquisition, cancellation, service health, and customer sentiment in one purchase-date-cohorted page. |
 
 Dashboard copy:
@@ -48,12 +47,12 @@ Implemented visuals:
 | AOV | `aov` | `mart_exec_daily.calendar_date`, `mart_exec_daily.gmv`, `mart_exec_daily.non_cancelled_orders_count` |
 | Cancellation Rate | `cancellation_rate` | `mart_exec_daily.calendar_date`, `mart_exec_daily.cancelled_orders_count`, `mart_exec_daily.orders_count` |
 | Late Delivery Rate | `late_delivery_rate` | `mart_exec_daily.calendar_date`, `mart_exec_daily.late_orders_count`, `mart_exec_daily.delivered_orders_count` |
-| Average Review Score | `avg_review_score` | `mart_exec_daily.calendar_date`, `mart_exec_daily.avg_review_score`, `mart_exec_daily.reviews_count` |
+| Average Review Score | `avg_review_score` | `mart_exec_daily.calendar_date`, `mart_exec_daily.review_score_sum`, `mart_exec_daily.reviews_count` |
 | New Customers | `new_customers_count` | `mart_exec_daily.calendar_date`, `mart_exec_daily.new_customers_count` |
 | GMV and Orders Trend | `calendar_date`, `gmv`, `orders_count` | `mart_exec_daily.calendar_date`, `mart_exec_daily.gmv`, `mart_exec_daily.orders_count` |
-| Cancellation vs Late Delivery | `calendar_date`, `cancellation_rate`, `late_delivery_rate` | `mart_exec_daily.calendar_date`, `mart_exec_daily.cancellation_rate`, `mart_exec_daily.late_delivery_rate` |
+| Cancellation vs Late Delivery | `calendar_date`, `cancellation_rate`, `late_delivery_rate` | `mart_exec_daily.calendar_date`, `mart_exec_daily.cancelled_orders_count`, `mart_exec_daily.orders_count`, `mart_exec_daily.late_orders_count`, `mart_exec_daily.delivered_orders_count` |
 | New Customers Trend | `calendar_date`, `new_customers_count` | `mart_exec_daily.calendar_date`, `mart_exec_daily.new_customers_count` |
-| Review Score Trend | `calendar_date`, `avg_review_score`, `reviews_count` | `mart_exec_daily.calendar_date`, `mart_exec_daily.avg_review_score`, `mart_exec_daily.reviews_count` |
+| Review Score Trend | `calendar_date`, `avg_review_score`, `reviews_count` | `mart_exec_daily.calendar_date`, `mart_exec_daily.review_score_sum`, `mart_exec_daily.reviews_count` |
 
 ## Dashboard 2: Seller Operations
 
@@ -63,7 +62,7 @@ Implemented visuals:
 | Primary mart | `mart_seller_performance` |
 | Grain | One row per seller-date in `mart_seller_performance` |
 | Collection | `MerchantPulse / Seller Ops` |
-| Reference capture path | `dashboards/screenshots/seller_operations_v1.svg` |
+| Reference capture path | `dashboards/screenshots/seller_operations_final.png` |
 | Goal | Translate executive-level variance into accountable seller-level commercial and operational ownership. |
 
 Dashboard copy:
@@ -97,8 +96,8 @@ Implemented visuals:
 | Primary mart | `mart_fulfillment_ops` |
 | Grain | One row per `purchase_date`, `customer_state`, and `delivery_delay_bucket` slice in `mart_fulfillment_ops` |
 | Collection | `MerchantPulse / Fulfillment Ops` |
-| Reference capture path | `dashboards/screenshots/fulfillment_operations_v1.svg` |
-| Goal | Explain delivery delay patterns with geography, holiday context, and proxy weather context aggregated across each slice's delivery-date distribution. |
+| Reference capture path | `dashboards/screenshots/fulfillment_operations_final.png` |
+| Goal | Explain delivery delay patterns with geography, holiday context, and bucketed proxy weather risk bands aggregated across each slice's delivery-date distribution. |
 
 Dashboard copy:
 
@@ -118,10 +117,11 @@ Implemented visuals:
 | Visual | Output columns | Dependency columns |
 |---|---|---|
 | Delay Rate by Customer State | `customer_state`, `orders_count`, `late_orders_count`, `delivered_orders_count`, `late_delivery_rate` | `mart_fulfillment_ops.purchase_date`, `mart_fulfillment_ops.customer_state`, `mart_fulfillment_ops.delivery_delay_bucket`, `mart_fulfillment_ops.is_purchase_on_holiday`, `mart_fulfillment_ops.orders_count`, `mart_fulfillment_ops.late_orders_count`, `mart_fulfillment_ops.delivered_orders_count` |
-| Delay Bucket Distribution | `delivery_delay_bucket`, `orders_count` | `mart_fulfillment_ops.purchase_date`, `mart_fulfillment_ops.customer_state`, `mart_fulfillment_ops.delivery_delay_bucket`, `mart_fulfillment_ops.is_purchase_on_holiday`, `mart_fulfillment_ops.orders_count` |
-| Holiday Impact | `purchase_date`, `is_purchase_on_holiday`, `orders_count`, `late_delivery_rate` | `mart_fulfillment_ops.purchase_date`, `mart_fulfillment_ops.customer_state`, `mart_fulfillment_ops.delivery_delay_bucket`, `mart_fulfillment_ops.is_purchase_on_holiday`, `mart_fulfillment_ops.orders_count`, `mart_fulfillment_ops.late_orders_count`, `mart_fulfillment_ops.delivered_orders_count` |
-| Proxy Weather Impact | `purchase_date`, `avg_delivery_precipitation_total`, `avg_delivery_temperature_max`, `late_delivery_rate`, `orders_count` | `mart_fulfillment_ops.purchase_date`, `mart_fulfillment_ops.customer_state`, `mart_fulfillment_ops.delivery_delay_bucket`, `mart_fulfillment_ops.is_purchase_on_holiday`, `mart_fulfillment_ops.avg_delivery_precipitation_total`, `mart_fulfillment_ops.avg_delivery_temperature_max`, `mart_fulfillment_ops.orders_count`, `mart_fulfillment_ops.late_orders_count`, `mart_fulfillment_ops.delivered_orders_count` |
-| Average Late Days by State | `customer_state`, `avg_late_days`, `late_orders_count` | `mart_fulfillment_ops.purchase_date`, `mart_fulfillment_ops.customer_state`, `mart_fulfillment_ops.delivery_delay_bucket`, `mart_fulfillment_ops.is_purchase_on_holiday`, `mart_fulfillment_ops.avg_late_days`, `mart_fulfillment_ops.late_orders_count` |
+| Delay Bucket Distribution | `distribution_view`, `delay_bucket`, `orders_count` | `mart_fulfillment_ops.purchase_date`, `mart_fulfillment_ops.customer_state`, `mart_fulfillment_ops.delivery_delay_bucket`, `mart_fulfillment_ops.is_purchase_on_holiday`, `mart_fulfillment_ops.orders_count` |
+| Holiday Impact | `holiday_cohort`, `orders_count`, `late_delivery_rate` | `mart_fulfillment_ops.purchase_date`, `mart_fulfillment_ops.customer_state`, `mart_fulfillment_ops.delivery_delay_bucket`, `mart_fulfillment_ops.is_purchase_on_holiday`, `mart_fulfillment_ops.orders_count`, `mart_fulfillment_ops.late_orders_count`, `mart_fulfillment_ops.delivered_orders_count` |
+| Late Rate by Precipitation Bucket | `precipitation_bucket`, `bucket_sort`, `delivered_orders_count`, `late_orders_count`, `late_delivery_rate`, `orders_count` | `mart_fulfillment_ops.purchase_date`, `mart_fulfillment_ops.customer_state`, `mart_fulfillment_ops.delivery_delay_bucket`, `mart_fulfillment_ops.is_purchase_on_holiday`, `mart_fulfillment_ops.avg_delivery_precipitation_total`, `mart_fulfillment_ops.orders_count`, `mart_fulfillment_ops.late_orders_count`, `mart_fulfillment_ops.delivered_orders_count` |
+| Late Rate by Temperature Bucket | `temperature_bucket`, `bucket_sort`, `delivered_orders_count`, `late_orders_count`, `late_delivery_rate`, `orders_count` | `mart_fulfillment_ops.purchase_date`, `mart_fulfillment_ops.customer_state`, `mart_fulfillment_ops.delivery_delay_bucket`, `mart_fulfillment_ops.is_purchase_on_holiday`, `mart_fulfillment_ops.avg_delivery_temperature_max`, `mart_fulfillment_ops.orders_count`, `mart_fulfillment_ops.late_orders_count`, `mart_fulfillment_ops.delivered_orders_count` |
+| Average Late Days by State | `customer_state`, `avg_late_days`, `late_orders_count` | `mart_fulfillment_ops.purchase_date`, `mart_fulfillment_ops.customer_state`, `mart_fulfillment_ops.delivery_delay_bucket`, `mart_fulfillment_ops.is_purchase_on_holiday`, `mart_fulfillment_ops.late_days_sum`, `mart_fulfillment_ops.late_orders_count` |
 | Cancelled Order Trend | `purchase_date`, `cancelled_orders_count` | `mart_fulfillment_ops.purchase_date`, `mart_fulfillment_ops.customer_state`, `mart_fulfillment_ops.delivery_delay_bucket`, `mart_fulfillment_ops.is_purchase_on_holiday`, `mart_fulfillment_ops.cancelled_orders_count` |
 
 ## Dashboard Quality Rules
@@ -136,7 +136,7 @@ Implemented visuals:
 - Seller operations charts must read `mart_seller_performance`.
 - Fulfillment charts must read `mart_fulfillment_ops`.
 - The Core Trio dashboards remain declared as dbt exposures so mart-to-dashboard lineage stays machine readable.
-- Every reference capture path must exist in `dashboards/screenshots/`, even before live screenshot export is complete.
+- Every reference capture path must exist in `dashboards/screenshots/` and stay aligned with the current published dashboard layout.
 
 ## Roadmap: Experience Dashboards
 
