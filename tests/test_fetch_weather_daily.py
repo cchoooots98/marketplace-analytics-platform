@@ -1,13 +1,14 @@
-import logging
 from datetime import date
 
 import pandas as pd
 import pytest
 import requests
-from google.api_core.exceptions import GoogleAPIError
 
 from ingestion.weather import fetch_weather_daily
-from ingestion.utils.bigquery_client import BigQueryWriteResult
+from ingestion.utils.bigquery_client import (
+    BigQueryWriteResult,
+    BigQueryWriteResultState,
+)
 
 
 class FakeResponse:
@@ -334,6 +335,7 @@ def test_load_weather_daily_writes_to_raw_ext_weather_daily(
         return BigQueryWriteResult(
             table_id=table_id,
             write_mode=write_mode,
+            result_state=BigQueryWriteResultState.COMPLETED,
             job_id="weather_job",
             input_rows=len(dataframe.index),
             input_columns=len(dataframe.columns),
@@ -365,60 +367,3 @@ def test_load_weather_daily_writes_to_raw_ext_weather_daily(
     assert captured_write["table_id"] == "raw_ext.weather_daily"
     assert captured_write["write_mode"] == "replace"
     assert write_result.job_id == "weather_job"
-
-
-def test_main_returns_one_on_google_api_error(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Validate CLI BigQuery runtime failures return exit code 1 with traceback.
-
-    Args:
-        monkeypatch: Pytest fixture for replacing runtime collaborators.
-        caplog: Pytest fixture for capturing log records.
-
-    Returns:
-        None.
-    """
-    monkeypatch.setattr(fetch_weather_daily, "load_dotenv", lambda: None)
-    monkeypatch.setattr(
-        fetch_weather_daily,
-        "configure_google_application_credentials",
-        lambda _: None,
-    )
-    monkeypatch.setattr(
-        fetch_weather_daily,
-        "create_bigquery_client",
-        lambda **_: object(),
-    )
-
-    def fake_load_weather_daily(*args: object, **kwargs: object) -> BigQueryWriteResult:
-        raise GoogleAPIError("load failed")
-
-    monkeypatch.setattr(
-        fetch_weather_daily, "load_weather_daily", fake_load_weather_daily
-    )
-
-    with caplog.at_level(logging.ERROR):
-        exit_code = fetch_weather_daily.main(
-            [
-                "--start-date",
-                "2026-01-01",
-                "--end-date",
-                "2026-01-01",
-                "--project-id",
-                "marketplace-prod",
-                "--location",
-                "EU",
-                "--api-key",
-                "test-key",
-                "--latitude",
-                "-23.5505",
-                "--longitude",
-                "-46.6333",
-            ]
-        )
-
-    assert exit_code == 1
-    assert "Weather daily ingestion failed" in caplog.text
-    assert caplog.records[-1].exc_info is not None

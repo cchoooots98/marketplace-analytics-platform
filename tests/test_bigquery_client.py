@@ -1,13 +1,15 @@
 import pandas as pd
 import pytest
+from google.api_core.exceptions import GoogleAPIError
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import bigquery
 
 from ingestion.utils import bigquery_client
+from ingestion.utils.bigquery_client import BigQueryWriteResultState
 
 
 class FakeLoadJob:
-    """Small test double for a completed BigQuery load job."""
+    """Small test double for a completed BigQuery load or copy job."""
 
     def __init__(
         self,
@@ -22,11 +24,6 @@ class FakeLoadJob:
         self.result_called = False
 
     def result(self) -> "FakeLoadJob":
-        """Record that the production function waited for job completion.
-
-        Returns:
-            The fake load job, matching the chainable shape of Google clients.
-        """
         self.result_called = True
         if self.result_exception is not None:
             raise self.result_exception
@@ -34,7 +31,7 @@ class FakeLoadJob:
 
 
 class FakeBigQueryClient:
-    """Small test double that captures load_table_from_dataframe inputs."""
+    """Small test double that captures BigQuery write inputs."""
 
     def __init__(
         self,
@@ -64,17 +61,6 @@ class FakeBigQueryClient:
         job_config: bigquery.LoadJobConfig,
         location: str | None,
     ) -> FakeLoadJob:
-        """Capture the load request and return a fake load job.
-
-        Args:
-            dataframe: DataFrame passed by the production write helper.
-            destination: Destination BigQuery table ID.
-            job_config: BigQuery load job configuration.
-            location: BigQuery job location.
-
-        Returns:
-            The fake load job configured for the test.
-        """
         self.loaded_dataframe = dataframe
         self.destination_table = destination
         self.job_config = job_config
@@ -89,7 +75,6 @@ class FakeBigQueryClient:
         job_config: bigquery.CopyJobConfig,
         location: str | None,
     ) -> FakeLoadJob:
-        """Capture the publish copy request for atomic replace tests."""
         self.copy_source = sources
         self.copy_destination = destination
         self.copy_job_config = job_config
@@ -97,7 +82,6 @@ class FakeBigQueryClient:
         return self.copy_job
 
     def delete_table(self, table: str, *, not_found_ok: bool) -> None:
-        """Capture cleanup of the staging table."""
         self.deleted_table = table
         self.not_found_ok = not_found_ok
         if self.delete_exception is not None:
@@ -107,14 +91,6 @@ class FakeBigQueryClient:
 def test_create_bigquery_client_passes_project_and_location(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Validate that client creation forwards normalized project and location.
-
-    Args:
-        monkeypatch: Pytest fixture for replacing the Google client constructor.
-
-    Returns:
-        None.
-    """
     captured_arguments: dict[str, str | None] = {}
     expected_client = object()
 
@@ -144,15 +120,6 @@ def test_create_bigquery_client_passes_project_and_location(
 def test_create_bigquery_client_wraps_missing_default_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Validate missing Google credentials return a project-level error.
-
-    Args:
-        monkeypatch: Pytest fixture for replacing the Google client constructor.
-
-    Returns:
-        None.
-    """
-
     def fake_client(
         *,
         project: str | None,
@@ -173,11 +140,6 @@ def test_create_bigquery_client_wraps_missing_default_credentials(
 
 
 def test_write_dataframe_to_bigquery_appends_dataframe() -> None:
-    """Validate append-mode DataFrame loads.
-
-    Returns:
-        None.
-    """
     orders_dataframe = pd.DataFrame(
         {
             "order_id": ["order_1", "order_2"],
@@ -207,6 +169,7 @@ def test_write_dataframe_to_bigquery_appends_dataframe() -> None:
     assert write_result.to_log_dict() == {
         "table_id": "raw_olist.orders",
         "write_mode": "append",
+        "result_state": BigQueryWriteResultState.COMPLETED,
         "job_id": "append_job",
         "input_rows": 2,
         "input_columns": 2,
@@ -215,11 +178,6 @@ def test_write_dataframe_to_bigquery_appends_dataframe() -> None:
 
 
 def test_write_dataframe_to_bigquery_replaces_table_contents() -> None:
-    """Validate replace-mode DataFrame loads publish through a staging table.
-
-    Returns:
-        None.
-    """
     holidays_dataframe = pd.DataFrame(
         {
             "holiday_date": ["2026-01-01"],
@@ -258,23 +216,39 @@ def test_write_dataframe_to_bigquery_replaces_table_contents() -> None:
     assert write_result.loaded_rows == 1
     assert write_result.write_mode == "replace"
     assert write_result.job_id == "publish_job"
+    assert write_result.result_state is BigQueryWriteResultState.COMPLETED
+
+
+def test_atomic_replace_cleanup_failure_raises_after_success() -> None:
+    fake_client = FakeBigQueryClient(
+        FakeLoadJob(job_id="stage_job", output_rows=1),
+        copy_job=FakeLoadJob(job_id="publish_job", output_rows=1),
+        delete_exception=GoogleAPIError("cleanup failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="Atomic swap staging cleanup failed"):
+        bigquery_client.write_dataframe_to_bigquery(
+            pd.DataFrame({"holiday_date": ["2026-01-01"]}),
+            "project.raw_ext.holidays",
+            write_mode="replace",
+            client=fake_client,
+        )
 
 
 def test_atomic_replace_cleanup_does_not_mask_primary_failure(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Validate staging cleanup warnings do not replace the original failure."""
     failing_stage_job = FakeLoadJob(
         job_id="stage_job",
         output_rows=1,
-        result_exception=RuntimeError("stage load failed"),
+        result_exception=GoogleAPIError("stage load failed"),
     )
     fake_client = FakeBigQueryClient(
         failing_stage_job,
-        delete_exception=RuntimeError("cleanup failed"),
+        delete_exception=GoogleAPIError("cleanup failed"),
     )
 
-    with pytest.raises(RuntimeError, match="stage load failed"):
+    with pytest.raises(GoogleAPIError, match="stage load failed"):
         bigquery_client.write_dataframe_to_bigquery(
             pd.DataFrame({"holiday_date": ["2026-01-01"]}),
             "project.raw_ext.holidays",
@@ -286,11 +260,6 @@ def test_atomic_replace_cleanup_does_not_mask_primary_failure(
 
 
 def test_write_dataframe_to_bigquery_rejects_invalid_write_mode() -> None:
-    """Validate that unsupported write modes fail before a load job starts.
-
-    Returns:
-        None.
-    """
     orders_dataframe = pd.DataFrame({"order_id": ["order_1"]})
 
     with pytest.raises(ValueError, match="write_mode must be one of"):
@@ -303,11 +272,6 @@ def test_write_dataframe_to_bigquery_rejects_invalid_write_mode() -> None:
 
 
 def test_write_dataframe_to_bigquery_rejects_empty_dataframe() -> None:
-    """Validate that empty loads fail fast.
-
-    Returns:
-        None.
-    """
     empty_orders_dataframe = pd.DataFrame(columns=["order_id"])
 
     with pytest.raises(ValueError, match="at least one row"):

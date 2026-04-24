@@ -1,420 +1,482 @@
-import logging
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
-import pandas as pd
 import pytest
-from google.api_core.exceptions import GoogleAPIError
-from pandas.errors import ParserError
 
-from ingestion import main as ingestion_main
-from ingestion.utils.bigquery_client import (
-    BigQueryConfigurationError,
-    BigQueryWriteResult,
+import ingestion.main as ingestion_main
+from ingestion.olist.batch_runtime import (
+    DateWindow,
+    DiscoveredOlistBatchFile,
+    IncrementalOrderWindows,
 )
-from ingestion.weather.fetch_weather_daily import WeatherDailyConfig
+from ingestion.olist.registry import CUSTOMERS_SPEC, ORDERS_SPEC
+from ingestion.utils.batch_key import BatchKey
+from ingestion.utils.bigquery_client import (
+    BigQueryWriteResult,
+    BigQueryWriteResultState,
+)
+from ingestion.utils.ingestion_state import (
+    EnrichmentBatchStatus,
+    IngestionBatchState,
+    PublishBatchStatus,
+    RawBatchStatus,
+)
 
 
-def test_resolve_olist_date_range_reads_local_orders_csv(tmp_path: Path) -> None:
-    """Validate Olist date range resolution from the local orders file.
+def _parse_args(*arguments: str):
+    return ingestion_main.parse_arguments(arguments)
 
-    Args:
-        tmp_path: Pytest fixture providing a temporary directory.
 
-    Returns:
-        None.
-    """
-    orders_csv_path = tmp_path / "olist_orders_dataset.csv"
-    pd.DataFrame(
-        {
-            "order_purchase_timestamp": [
-                "2016-09-04 21:15:19",
-                "2018-10-17 17:30:18",
-            ]
-        }
-    ).to_csv(orders_csv_path, index=False)
-
-    assert ingestion_main.resolve_olist_date_range(tmp_path) == (
-        date(2016, 9, 4),
-        date(2018, 10, 17),
+def _write_result(table_id: str, loaded_rows: int = 1) -> BigQueryWriteResult:
+    return BigQueryWriteResult(
+        table_id=table_id,
+        write_mode="append",
+        result_state=BigQueryWriteResultState.COMPLETED,
+        job_id="job_123",
+        input_rows=loaded_rows,
+        input_columns=3,
+        loaded_rows=loaded_rows,
     )
 
 
-def test_main_runs_olist_holidays_and_weather_in_order(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Validate the unified entrypoint orchestrates all raw loaders in order.
-
-    Args:
-        monkeypatch: Pytest fixture for replacing collaborators.
-
-    Returns:
-        None.
-    """
-    calls: list[str] = []
-    fake_client = object()
-
-    def fake_create_bigquery_client(
-        *,
-        project_id: str | None,
-        location: str | None,
-    ) -> object:
-        calls.append("client")
-        return fake_client
-
-    def fake_run_olist_loaders(
-        olist_data_dir: str,
-        *,
-        client: object,
-        project_id: str,
-        location: str,
-        loaders: tuple[ingestion_main.OlistTableLoader, ...] = (),
-    ) -> list[BigQueryWriteResult]:
-        calls.append("olist")
-        return []
-
-    def fake_load_holidays(
-        start_date: date,
-        end_date: date,
-        *,
-        country_code: str,
-        client: object,
-        project_id: str,
-        location: str,
-    ) -> BigQueryWriteResult:
-        calls.append("holidays")
-        return _write_result("raw_ext.holidays")
-
-    def fake_load_weather_daily(
-        start_date: date,
-        end_date: date,
-        config: WeatherDailyConfig,
-        *,
-        write_mode: str,
-        client: object,
-        project_id: str,
-        location: str,
-    ) -> BigQueryWriteResult:
-        calls.append("weather")
-        return _write_result("raw_ext.weather_daily")
-
-    monkeypatch.setenv("GCP_PROJECT_ID", "marketplace-prod")
-    monkeypatch.setenv("BIGQUERY_LOCATION", "EU")
-    monkeypatch.setenv("OPENWEATHER_API_KEY", "test-key")
-    monkeypatch.setenv("OPENWEATHER_LATITUDE", "-23.5505")
-    monkeypatch.setenv("OPENWEATHER_LONGITUDE", "-46.6333")
-    monkeypatch.setattr(ingestion_main, "load_dotenv", lambda: None)
-    monkeypatch.setattr(
-        ingestion_main, "configure_google_application_credentials", lambda _: None
-    )
-    monkeypatch.setattr(
-        ingestion_main, "create_bigquery_client", fake_create_bigquery_client
-    )
-    monkeypatch.setattr(ingestion_main, "run_olist_loaders", fake_run_olist_loaders)
-    monkeypatch.setattr(ingestion_main, "load_holidays", fake_load_holidays)
-    monkeypatch.setattr(ingestion_main, "load_weather_daily", fake_load_weather_daily)
-
-    exit_code = ingestion_main.main(
-        [
-            "--start-date",
-            "2026-01-01",
-            "--end-date",
-            "2026-01-02",
-        ]
-    )
-
-    assert exit_code == 0
-    assert calls == ["client", "olist", "holidays", "weather"]
-
-
-def test_main_skip_flags_skip_requested_sections(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Validate skip flags disable only the requested sections.
-
-    Args:
-        monkeypatch: Pytest fixture for replacing collaborators.
-
-    Returns:
-        None.
-    """
-    calls: list[str] = []
-
-    monkeypatch.setenv("GCP_PROJECT_ID", "marketplace-prod")
-    monkeypatch.setenv("BIGQUERY_LOCATION", "EU")
-    monkeypatch.setattr(ingestion_main, "load_dotenv", lambda: None)
-    monkeypatch.setattr(
-        ingestion_main, "configure_google_application_credentials", lambda _: None
-    )
-    monkeypatch.setattr(
-        ingestion_main,
-        "create_bigquery_client",
-        lambda **_: object(),
-    )
-    monkeypatch.setattr(
-        ingestion_main, "run_olist_loaders", lambda *_, **__: calls.append("olist")
-    )
-    monkeypatch.setattr(
-        ingestion_main, "load_holidays", lambda *_, **__: calls.append("holidays")
-    )
-    monkeypatch.setattr(
-        ingestion_main, "load_weather_daily", lambda *_, **__: calls.append("weather")
-    )
-
-    exit_code = ingestion_main.main(
-        [
-            "--skip-olist",
-            "--skip-weather",
-            "--start-date",
-            "2026-01-01",
-            "--end-date",
-            "2026-01-02",
-        ]
-    )
-
-    assert exit_code == 0
-    assert calls == ["holidays"]
-
-
-def test_main_missing_dates_fails_before_loader_calls(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Validate enrichment loaders require an explicit or derived date range.
-
-    Args:
-        monkeypatch: Pytest fixture for replacing collaborators.
-
-    Returns:
-        None.
-    """
-    monkeypatch.setattr(ingestion_main, "load_dotenv", lambda: None)
-    monkeypatch.setattr(
-        ingestion_main,
-        "run_olist_loaders",
-        lambda *_, **__: pytest.fail(
-            "Olist should not run after date validation failure"
+def _loaded_order_state(
+    *,
+    holiday_status: EnrichmentBatchStatus,
+    weather_status: EnrichmentBatchStatus,
+    publish_status: PublishBatchStatus,
+) -> IngestionBatchState:
+    loaded_at_utc = datetime(2026, 4, 24, 8, 30, tzinfo=UTC)
+    return IngestionBatchState.loaded(
+        source_name="orders",
+        batch_id="batch_20260424T060000Z",
+        source_file_name="olist_orders_dataset.csv",
+        raw_table_id="raw_olist.orders",
+        raw_loaded_rows=2,
+        raw_job_id="job_123",
+        created_at_utc=loaded_at_utc,
+        updated_at_utc=loaded_at_utc,
+        raw_loaded_at_utc=loaded_at_utc,
+        holiday_window_start_date=date(2026, 1, 1),
+        holiday_window_end_date=date(2026, 1, 3),
+        weather_window_start_date=date(2025, 12, 31),
+        weather_window_end_date=date(2026, 1, 5),
+        holiday_status=holiday_status,
+        weather_status=weather_status,
+        publish_status=publish_status,
+        published_at_utc=(
+            loaded_at_utc if publish_status is PublishBatchStatus.PUBLISHED else None
         ),
     )
 
-    exit_code = ingestion_main.main([])
 
-    assert exit_code == 1
-
-
-def test_main_use_olist_date_range_resolves_expected_dates(
+def test_bootstrap_all_skipped_returns_true_no_op_without_bigquery_setup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Validate the full-history shortcut uses the Olist-derived range.
-
-    Args:
-        monkeypatch: Pytest fixture for replacing collaborators.
-
-    Returns:
-        None.
-    """
-    captured_dates: dict[str, date] = {}
-
-    def fake_load_holidays(
-        start_date: date,
-        end_date: date,
-        **kwargs: object,
-    ) -> BigQueryWriteResult:
-        captured_dates["start_date"] = start_date
-        captured_dates["end_date"] = end_date
-        return _write_result("raw_ext.holidays")
-
-    monkeypatch.setenv("GCP_PROJECT_ID", "marketplace-prod")
-    monkeypatch.setenv("BIGQUERY_LOCATION", "EU")
-    monkeypatch.setattr(ingestion_main, "load_dotenv", lambda: None)
     monkeypatch.setattr(
         ingestion_main,
-        "resolve_olist_date_range",
-        lambda _: (date(2016, 9, 4), date(2018, 10, 17)),
+        "create_bigquery_client",
+        lambda **_: pytest.fail("BigQuery client should not be created for no-op"),
     )
-    monkeypatch.setattr(
-        ingestion_main, "configure_google_application_credentials", lambda _: None
+
+    summary = ingestion_main.run_bootstrap_workflow(
+        _parse_args("--skip-olist", "--skip-holidays", "--skip-weather")
     )
-    monkeypatch.setattr(ingestion_main, "create_bigquery_client", lambda **_: object())
-    monkeypatch.setattr(ingestion_main, "run_olist_loaders", lambda *_, **__: [])
-    monkeypatch.setattr(ingestion_main, "load_holidays", fake_load_holidays)
 
-    exit_code = ingestion_main.main(["--use-olist-date-range", "--skip-weather"])
-
-    assert exit_code == 0
-    assert captured_dates == {
-        "start_date": date(2016, 9, 4),
-        "end_date": date(2018, 10, 17),
-    }
+    assert summary.no_op is True
+    assert summary.publish_complete is True
+    assert summary.raw_batches_loaded == ()
 
 
-def test_main_weather_over_budget_fails_before_api_calls(
+def test_incremental_all_skipped_returns_true_no_op_without_bigquery_setup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Validate weather budget failures stop before any loader work.
+    monkeypatch.setattr(
+        ingestion_main,
+        "create_bigquery_client",
+        lambda **_: pytest.fail("BigQuery client should not be created for no-op"),
+    )
 
-    Args:
-        monkeypatch: Pytest fixture for replacing collaborators.
+    summary = ingestion_main.run_incremental_workflow(
+        _parse_args(
+            "--mode",
+            "incremental",
+            "--skip-olist",
+            "--skip-holidays",
+            "--skip-weather",
+        )
+    )
 
-    Returns:
-        None.
-    """
-    monkeypatch.setenv("GCP_PROJECT_ID", "marketplace-prod")
-    monkeypatch.setenv("BIGQUERY_LOCATION", "EU")
-    monkeypatch.setenv("OPENWEATHER_API_KEY", "test-key")
-    monkeypatch.setenv("OPENWEATHER_LATITUDE", "-23.5505")
-    monkeypatch.setenv("OPENWEATHER_LONGITUDE", "-46.6333")
-    monkeypatch.setattr(ingestion_main, "load_dotenv", lambda: None)
+    assert summary.no_op is True
+    assert summary.publish_complete is True
+    assert summary.raw_batches_loaded == ()
+    assert summary.batches_marked_published == ()
+
+
+def test_incremental_non_order_batch_publishes_immediately(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state_rows: list[IngestionBatchState] = []
+    landing_file = tmp_path / "batch_20260424T060000Z" / "olist_customers_dataset.csv"
+    landing_file.parent.mkdir(parents=True)
+    landing_file.write_text("customer_id\ncustomer_1\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        ingestion_main,
+        "require_cli_value",
+        lambda value, _: str(value),
+    )
+    monkeypatch.setattr(
+        ingestion_main,
+        "configure_google_application_credentials",
+        lambda _: None,
+    )
+    monkeypatch.setattr(ingestion_main, "create_bigquery_client", lambda **_: object())
+    monkeypatch.setattr(
+        ingestion_main,
+        "discover_olist_batch_files",
+        lambda *_, **__: [
+            DiscoveredOlistBatchFile(
+                batch_id="batch_20260424T060000Z",
+                source_name="customers",
+                csv_path=landing_file,
+            )
+        ],
+    )
+    monkeypatch.setattr(ingestion_main, "fetch_batch_states", lambda *_, **__: {})
+    monkeypatch.setattr(ingestion_main, "build_expected_olist_file_names", lambda: {})
+    monkeypatch.setattr(ingestion_main, "get_olist_spec", lambda _: CUSTOMERS_SPEC)
+    monkeypatch.setattr(
+        ingestion_main,
+        "build_batch_metadata",
+        lambda *_, **__: object(),
+    )
+    monkeypatch.setattr(
+        ingestion_main,
+        "load_raw_csv",
+        lambda *_, **__: _write_result("raw_olist.customers"),
+    )
+    monkeypatch.setattr(
+        ingestion_main,
+        "upsert_batch_states",
+        lambda _client, _table, rows: state_rows.extend(rows),
+    )
+
+    summary = ingestion_main.run_incremental_workflow(
+        _parse_args(
+            "--mode",
+            "incremental",
+            "--project-id",
+            "marketplace-prod",
+            "--location",
+            "EU",
+            "--state-table",
+            "ops.ingestion_batch_state",
+            "--landing-dir",
+            str(tmp_path),
+        )
+    )
+
+    assert summary.no_op is False
+    assert summary.publish_complete is True
+    assert [batch.source_name for batch in summary.raw_batches_loaded] == ["customers"]
+    assert [batch.source_name for batch in summary.batches_marked_published] == [
+        "customers"
+    ]
+    assert [row.publish_status for row in state_rows] == [PublishBatchStatus.PUBLISHED]
+
+
+def test_incremental_skip_enrichment_does_not_advance_publish(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state_rows: list[IngestionBatchState] = []
+    landing_file = tmp_path / "batch_20260424T060000Z" / "olist_orders_dataset.csv"
+    landing_file.parent.mkdir(parents=True)
+    landing_file.write_text("order_id\norder_1\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        ingestion_main,
+        "require_cli_value",
+        lambda value, _: str(value),
+    )
+    monkeypatch.setattr(
+        ingestion_main,
+        "configure_google_application_credentials",
+        lambda _: None,
+    )
+    monkeypatch.setattr(ingestion_main, "create_bigquery_client", lambda **_: object())
+    monkeypatch.setattr(
+        ingestion_main,
+        "discover_olist_batch_files",
+        lambda *_, **__: [
+            DiscoveredOlistBatchFile(
+                batch_id="batch_20260424T060000Z",
+                source_name="orders",
+                csv_path=landing_file,
+            )
+        ],
+    )
+    monkeypatch.setattr(ingestion_main, "fetch_batch_states", lambda *_, **__: {})
+    monkeypatch.setattr(ingestion_main, "build_expected_olist_file_names", lambda: {})
+    monkeypatch.setattr(ingestion_main, "get_olist_spec", lambda _: ORDERS_SPEC)
+    monkeypatch.setattr(
+        ingestion_main,
+        "build_batch_metadata",
+        lambda *_, **__: object(),
+    )
+    monkeypatch.setattr(
+        ingestion_main,
+        "load_raw_csv",
+        lambda *_, **__: _write_result("raw_olist.orders", loaded_rows=2),
+    )
+    monkeypatch.setattr(
+        ingestion_main,
+        "derive_incremental_order_windows",
+        lambda *_, **__: IncrementalOrderWindows(
+            holiday_window=DateWindow(
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 1, 3),
+            ),
+            weather_window=DateWindow(
+                start_date=date(2025, 12, 31),
+                end_date=date(2026, 1, 5),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        ingestion_main,
+        "upsert_batch_states",
+        lambda _client, _table, rows: state_rows.extend(rows),
+    )
+    monkeypatch.setattr(
+        ingestion_main,
+        "load_holidays",
+        lambda *_, **__: pytest.fail("Holiday loader should be skipped"),
+    )
     monkeypatch.setattr(
         ingestion_main,
         "load_weather_daily",
-        lambda *_, **__: pytest.fail("Weather loader should not run over budget"),
+        lambda *_, **__: pytest.fail("Weather loader should be skipped"),
     )
 
-    exit_code = ingestion_main.main(
-        [
-            "--skip-olist",
-            "--skip-holidays",
-            "--start-date",
-            "2026-01-01",
-            "--end-date",
-            "2026-01-03",
-            "--openweather-max-calls",
-            "2",
-        ]
-    )
-
-    assert exit_code == 1
-
-
-def test_main_fails_fast_when_enrichment_range_is_missing_after_resolution(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Validate production guards do not rely on Python asserts.
-
-    Args:
-        monkeypatch: Pytest fixture for replacing collaborators.
-
-    Returns:
-        None.
-    """
-    monkeypatch.setenv("GCP_PROJECT_ID", "marketplace-prod")
-    monkeypatch.setenv("BIGQUERY_LOCATION", "EU")
-    monkeypatch.setenv("OPENWEATHER_API_KEY", "test-key")
-    monkeypatch.setenv("OPENWEATHER_LATITUDE", "-23.5505")
-    monkeypatch.setenv("OPENWEATHER_LONGITUDE", "-46.6333")
-    monkeypatch.setattr(ingestion_main, "load_dotenv", lambda: None)
-    monkeypatch.setattr(
-        ingestion_main,
-        "resolve_enrichment_date_range",
-        lambda **_: None,
-    )
-    monkeypatch.setattr(
-        ingestion_main,
-        "validate_weather_api_budget",
-        lambda *_, **__: pytest.fail(
-            "Weather budget validation should not run without a date range"
-        ),
-    )
-
-    exit_code = ingestion_main.main(
-        [
-            "--skip-olist",
-            "--skip-holidays",
-            "--start-date",
-            "2026-01-01",
-            "--end-date",
-            "2026-01-02",
-        ]
-    )
-
-    assert exit_code == 1
-
-
-def test_main_bigquery_config_failure_stops_before_expensive_work(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Validate BigQuery config validation happens before loader work.
-
-    Args:
-        monkeypatch: Pytest fixture for replacing collaborators.
-
-    Returns:
-        None.
-    """
-    monkeypatch.setenv("GCP_PROJECT_ID", "marketplace-prod")
-    monkeypatch.setenv("BIGQUERY_LOCATION", "EU")
-    monkeypatch.setattr(ingestion_main, "load_dotenv", lambda: None)
-    monkeypatch.setattr(
-        ingestion_main,
-        "create_bigquery_client",
-        lambda **_: (_ for _ in ()).throw(BigQueryConfigurationError("missing")),
-    )
-    monkeypatch.setattr(
-        ingestion_main,
-        "run_olist_loaders",
-        lambda *_, **__: pytest.fail("Olist should not run after config failure"),
-    )
-
-    exit_code = ingestion_main.main(
-        [
+    summary = ingestion_main.run_incremental_workflow(
+        _parse_args(
+            "--mode",
+            "incremental",
+            "--project-id",
+            "marketplace-prod",
+            "--location",
+            "EU",
+            "--state-table",
+            "ops.ingestion_batch_state",
+            "--landing-dir",
+            str(tmp_path),
             "--skip-holidays",
             "--skip-weather",
-        ]
+        )
     )
 
-    assert exit_code == 1
+    assert summary.no_op is False
+    assert summary.publish_complete is False
+    assert [batch.source_name for batch in summary.raw_batches_loaded] == ["orders"]
+    assert summary.batches_marked_published == ()
+    assert [row.publish_status for row in state_rows] == [PublishBatchStatus.PENDING]
+    assert state_rows[0].holiday_status is EnrichmentBatchStatus.PENDING
+    assert state_rows[0].weather_status is EnrichmentBatchStatus.PENDING
 
 
-@pytest.mark.parametrize(
-    "raised_exception",
-    [
-        pytest.param(GoogleAPIError("load failed"), id="google_api_error"),
-        pytest.param(ParserError("malformed csv"), id="parser_error"),
-    ],
-)
-def test_main_returns_one_for_handled_runtime_failures(
+def test_incremental_recovers_publish_from_persisted_state_without_landing_files(
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-    raised_exception: Exception,
 ) -> None:
-    """Validate handled runtime failures return exit code 1 with traceback logs.
+    recorded_rows: list[IngestionBatchState] = []
+    batch_key = BatchKey(
+        source_name="orders",
+        batch_id="batch_20260424T060000Z",
+        source_file_name="olist_orders_dataset.csv",
+    )
 
-    Args:
-        monkeypatch: Pytest fixture for replacing collaborators.
-        caplog: Pytest fixture for capturing log records.
-        raised_exception: Handled runtime exception to inject.
-
-    Returns:
-        None.
-    """
-    monkeypatch.setenv("GCP_PROJECT_ID", "marketplace-prod")
-    monkeypatch.setenv("BIGQUERY_LOCATION", "EU")
-    monkeypatch.setattr(ingestion_main, "load_dotenv", lambda: None)
     monkeypatch.setattr(
-        ingestion_main, "configure_google_application_credentials", lambda _: None
+        ingestion_main,
+        "require_cli_value",
+        lambda value, _: str(value),
+    )
+    monkeypatch.setattr(
+        ingestion_main,
+        "configure_google_application_credentials",
+        lambda _: None,
     )
     monkeypatch.setattr(ingestion_main, "create_bigquery_client", lambda **_: object())
-
-    def fake_run_olist_loaders(*args: object, **kwargs: object) -> list[object]:
-        raise raised_exception
-
-    monkeypatch.setattr(ingestion_main, "run_olist_loaders", fake_run_olist_loaders)
-
-    with caplog.at_level(logging.ERROR):
-        exit_code = ingestion_main.main(["--skip-holidays", "--skip-weather"])
-
-    assert exit_code == 1
-    assert "Unified ingestion failed" in caplog.text
-    assert caplog.records[-1].exc_info is not None
-
-
-def _write_result(table_id: str) -> BigQueryWriteResult:
-    """Build a small BigQuery write result for orchestration tests."""
-    return BigQueryWriteResult(
-        table_id=table_id,
-        write_mode="replace",
-        job_id="job",
-        input_rows=1,
-        input_columns=1,
-        loaded_rows=1,
+    monkeypatch.setattr(
+        ingestion_main,
+        "fetch_batch_states",
+        lambda *_, **__: {
+            batch_key: _loaded_order_state(
+                holiday_status=EnrichmentBatchStatus.SUCCEEDED,
+                weather_status=EnrichmentBatchStatus.SUCCEEDED,
+                publish_status=PublishBatchStatus.PENDING,
+            )
+        },
     )
+    monkeypatch.setattr(
+        ingestion_main,
+        "upsert_batch_states",
+        lambda _client, _table, rows: recorded_rows.extend(rows),
+    )
+
+    summary = ingestion_main.run_incremental_workflow(
+        _parse_args(
+            "--mode",
+            "incremental",
+            "--project-id",
+            "marketplace-prod",
+            "--location",
+            "EU",
+            "--state-table",
+            "ops.ingestion_batch_state",
+            "--skip-olist",
+            "--skip-holidays",
+        )
+    )
+
+    assert summary.no_op is False
+    assert summary.publish_complete is True
+    assert summary.raw_batches_loaded == ()
+    assert [batch.source_name for batch in summary.batches_marked_published] == [
+        "orders"
+    ]
+    assert [row.publish_status for row in recorded_rows] == [
+        PublishBatchStatus.PUBLISHED
+    ]
+
+
+def test_incremental_fails_fast_when_persisted_window_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loaded_at_utc = datetime(2026, 4, 24, 8, 30, tzinfo=UTC)
+    invalid_state = IngestionBatchState.loaded(
+        source_name="orders",
+        batch_id="batch_20260424T060000Z",
+        source_file_name="olist_orders_dataset.csv",
+        raw_table_id="raw_olist.orders",
+        raw_loaded_rows=2,
+        raw_job_id="job_123",
+        created_at_utc=loaded_at_utc,
+        updated_at_utc=loaded_at_utc,
+        raw_loaded_at_utc=loaded_at_utc,
+        holiday_window_start_date=None,
+        holiday_window_end_date=None,
+        weather_window_start_date=date(2025, 12, 31),
+        weather_window_end_date=date(2026, 1, 5),
+        holiday_status=EnrichmentBatchStatus.PENDING,
+        weather_status=EnrichmentBatchStatus.SUCCEEDED,
+        publish_status=PublishBatchStatus.PENDING,
+    )
+    batch_key = invalid_state.batch_key()
+
+    monkeypatch.setattr(
+        ingestion_main,
+        "require_cli_value",
+        lambda value, _: str(value),
+    )
+    monkeypatch.setattr(
+        ingestion_main,
+        "configure_google_application_credentials",
+        lambda _: None,
+    )
+    monkeypatch.setattr(ingestion_main, "create_bigquery_client", lambda **_: object())
+    monkeypatch.setattr(
+        ingestion_main,
+        "fetch_batch_states",
+        lambda *_, **__: {batch_key: invalid_state},
+    )
+
+    with pytest.raises(ValueError, match="Persisted holiday window"):
+        ingestion_main.run_incremental_workflow(
+            _parse_args(
+                "--mode",
+                "incremental",
+                "--project-id",
+                "marketplace-prod",
+                "--location",
+                "EU",
+                "--state-table",
+                "ops.ingestion_batch_state",
+                "--skip-olist",
+            )
+        )
+
+
+def test_incremental_records_failed_raw_state_when_raw_load_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    recorded_rows: list[IngestionBatchState] = []
+    landing_file = tmp_path / "batch_20260424T060000Z" / "olist_orders_dataset.csv"
+    landing_file.parent.mkdir(parents=True)
+    landing_file.write_text("order_id\norder_1\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        ingestion_main,
+        "require_cli_value",
+        lambda value, _: str(value),
+    )
+    monkeypatch.setattr(
+        ingestion_main,
+        "configure_google_application_credentials",
+        lambda _: None,
+    )
+    monkeypatch.setattr(ingestion_main, "create_bigquery_client", lambda **_: object())
+    monkeypatch.setattr(
+        ingestion_main,
+        "discover_olist_batch_files",
+        lambda *_, **__: [
+            DiscoveredOlistBatchFile(
+                batch_id="batch_20260424T060000Z",
+                source_name="orders",
+                csv_path=landing_file,
+            )
+        ],
+    )
+    monkeypatch.setattr(ingestion_main, "fetch_batch_states", lambda *_, **__: {})
+    monkeypatch.setattr(ingestion_main, "build_expected_olist_file_names", lambda: {})
+    monkeypatch.setattr(ingestion_main, "get_olist_spec", lambda _: ORDERS_SPEC)
+    monkeypatch.setattr(
+        ingestion_main,
+        "build_batch_metadata",
+        lambda *_, **__: object(),
+    )
+
+    def fake_load_raw_csv(*args: object, **kwargs: object) -> BigQueryWriteResult:
+        raise RuntimeError("raw load failed")
+
+    monkeypatch.setattr(ingestion_main, "load_raw_csv", fake_load_raw_csv)
+    monkeypatch.setattr(
+        ingestion_main,
+        "upsert_batch_states",
+        lambda _client, _table, rows: recorded_rows.extend(rows),
+    )
+
+    with pytest.raises(RuntimeError, match="raw load failed"):
+        ingestion_main.run_incremental_workflow(
+            _parse_args(
+                "--mode",
+                "incremental",
+                "--project-id",
+                "marketplace-prod",
+                "--location",
+                "EU",
+                "--state-table",
+                "ops.ingestion_batch_state",
+                "--landing-dir",
+                str(tmp_path),
+            )
+        )
+
+    assert len(recorded_rows) == 1
+    failed_state = recorded_rows[0]
+    assert failed_state.raw_status is RawBatchStatus.FAILED
+    assert failed_state.publish_status is PublishBatchStatus.PENDING
+    assert failed_state.raw_table_id == ORDERS_SPEC.resolve_table_id()
+    assert failed_state.last_error_class == "RuntimeError"
+    assert failed_state.last_error_message == "raw load failed"

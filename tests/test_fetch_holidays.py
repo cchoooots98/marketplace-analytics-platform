@@ -1,13 +1,14 @@
-import logging
 from datetime import date
 
 import pandas as pd
 import pytest
 import requests
-from google.api_core.exceptions import GoogleAPIError
 
 from ingestion.holidays import fetch_holidays
-from ingestion.utils.bigquery_client import BigQueryWriteResult
+from ingestion.utils.bigquery_client import (
+    BigQueryWriteResult,
+    BigQueryWriteResultState,
+)
 
 
 class FakeResponse:
@@ -405,6 +406,7 @@ def test_load_holidays_writes_to_raw_ext_holidays(
         return BigQueryWriteResult(
             table_id=table_id,
             write_mode=write_mode,
+            result_state=BigQueryWriteResultState.COMPLETED,
             job_id="holiday_job",
             input_rows=len(dataframe.index),
             input_columns=len(dataframe.columns),
@@ -438,44 +440,21 @@ def test_load_holidays_writes_to_raw_ext_holidays(
     assert write_result.job_id == "holiday_job"
 
 
-def test_main_returns_one_on_google_api_error(
+def test_load_holidays_allow_empty_returns_explicit_no_op(
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Validate CLI BigQuery runtime failures return exit code 1 with traceback.
-
-    Args:
-        monkeypatch: Pytest fixture for replacing runtime collaborators.
-        caplog: Pytest fixture for capturing log records.
-
-    Returns:
-        None.
-    """
-    monkeypatch.setattr(fetch_holidays, "load_dotenv", lambda: None)
     monkeypatch.setattr(
-        fetch_holidays, "configure_google_application_credentials", lambda _: None
+        fetch_holidays,
+        "fetch_holidays_for_date_range",
+        lambda *_, **__: [],
     )
-    monkeypatch.setattr(fetch_holidays, "create_bigquery_client", lambda **_: object())
 
-    def fake_load_holidays(*args: object, **kwargs: object) -> BigQueryWriteResult:
-        raise GoogleAPIError("load failed")
+    write_result = fetch_holidays.load_holidays(
+        date(2026, 1, 1),
+        date(2026, 1, 2),
+        country_code="BR",
+        allow_empty=True,
+    )
 
-    monkeypatch.setattr(fetch_holidays, "load_holidays", fake_load_holidays)
-
-    with caplog.at_level(logging.ERROR):
-        exit_code = fetch_holidays.main(
-            [
-                "--start-date",
-                "2026-01-01",
-                "--end-date",
-                "2026-01-02",
-                "--project-id",
-                "marketplace-prod",
-                "--location",
-                "EU",
-            ]
-        )
-
-    assert exit_code == 1
-    assert "Holiday ingestion failed" in caplog.text
-    assert caplog.records[-1].exc_info is not None
+    assert write_result.result_state is BigQueryWriteResultState.NO_OP
+    assert write_result.job_id is None
