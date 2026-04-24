@@ -25,3 +25,7 @@ where
         'late_delivery_rate',
         'safe_divide(late_orders_count, nullif(delivered_orders_count, 0))'
     ) }}
+    or {{ nullable_amount_mismatch(
+        'avg_review_score',
+        'safe_divide(review_score_sum, nullif(reviews_count, 0))'
+    ) }}

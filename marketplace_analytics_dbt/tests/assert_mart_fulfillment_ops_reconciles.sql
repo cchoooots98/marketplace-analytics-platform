@@ -40,6 +40,38 @@ expected as (
         countif(is_delivered) as delivered_orders_count,
         countif(is_late) as late_orders_count,
         countif(is_cancelled) as cancelled_orders_count,
+        sum(case
+            when is_late then cast(late_days as float64)
+            else 0
+        end) as late_days_sum,
+        countif(delivery_temperature_max is not null)
+            as delivery_temperature_max_observation_count,
+        sum(case
+            when delivery_temperature_max is not null
+                then cast(delivery_temperature_max as float64)
+            else 0
+        end) as delivery_temperature_max_sum,
+        countif(delivery_temperature_min is not null)
+            as delivery_temperature_min_observation_count,
+        sum(case
+            when delivery_temperature_min is not null
+                then cast(delivery_temperature_min as float64)
+            else 0
+        end) as delivery_temperature_min_sum,
+        countif(delivery_precipitation_total is not null)
+            as delivery_precipitation_total_observation_count,
+        sum(case
+            when delivery_precipitation_total is not null
+                then cast(delivery_precipitation_total as float64)
+            else 0
+        end) as delivery_precipitation_total_sum,
+        countif(delivery_humidity_afternoon is not null)
+            as delivery_humidity_afternoon_observation_count,
+        sum(case
+            when delivery_humidity_afternoon is not null
+                then cast(delivery_humidity_afternoon as float64)
+            else 0
+        end) as delivery_humidity_afternoon_sum,
         avg(case
             when is_late then cast(late_days as float64)
         end) as avg_late_days
@@ -58,6 +90,15 @@ actual as (
         delivered_orders_count,
         late_orders_count,
         cancelled_orders_count,
+        late_days_sum,
+        delivery_temperature_max_observation_count,
+        delivery_temperature_max_sum,
+        delivery_temperature_min_observation_count,
+        delivery_temperature_min_sum,
+        delivery_precipitation_total_observation_count,
+        delivery_precipitation_total_sum,
+        delivery_humidity_afternoon_observation_count,
+        delivery_humidity_afternoon_sum,
         avg_late_days
     from {{ ref('mart_fulfillment_ops') }}
 
@@ -71,9 +112,20 @@ actual as (
         'orders_count',
         'delivered_orders_count',
         'late_orders_count',
-        'cancelled_orders_count'
+        'cancelled_orders_count',
+        'delivery_temperature_max_observation_count',
+        'delivery_temperature_min_observation_count',
+        'delivery_precipitation_total_observation_count',
+        'delivery_humidity_afternoon_observation_count'
     ],
-    nullable_rate_columns=[
+    required_amount_columns=[
+        'late_days_sum',
+        'delivery_temperature_max_sum',
+        'delivery_temperature_min_sum',
+        'delivery_precipitation_total_sum',
+        'delivery_humidity_afternoon_sum'
+    ],
+    nullable_amount_columns=[
         'avg_late_days'
     ],
     diagnostic_columns=[

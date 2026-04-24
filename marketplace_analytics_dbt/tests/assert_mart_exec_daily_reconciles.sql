@@ -37,6 +37,7 @@ review_conservation as (
     select
         purchase_date as calendar_date,
         count(*) as reviews_count,
+        sum(cast(review_score as float64)) as review_score_sum,
         avg(cast(review_score as float64)) as avg_review_score
     from {{ ref('fact_reviews') }}
     group by purchase_date
@@ -58,6 +59,7 @@ expected as (
         oc.freight_total,
         oc.payment_total,
         coalesce(rc.reviews_count, 0) as reviews_count,
+        coalesce(rc.review_score_sum, 0) as review_score_sum,
         rc.avg_review_score
     from order_conservation as oc
     left join review_conservation as rc
@@ -80,6 +82,7 @@ actual as (
         freight_total,
         payment_total,
         reviews_count,
+        review_score_sum,
         avg_review_score
     from {{ ref('mart_exec_daily') }}
 
@@ -102,7 +105,8 @@ actual as (
         'gmv',
         'items_value',
         'freight_total',
-        'payment_total'
+        'payment_total',
+        'review_score_sum'
     ],
     nullable_rate_columns=[
         'avg_review_score'
