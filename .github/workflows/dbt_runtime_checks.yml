@@ -1,4 +1,4 @@
-name: dbt_runtime_checks
+name: warehouse_runtime_checks
 
 on:
   workflow_dispatch:
@@ -7,6 +7,7 @@ on:
 
 jobs:
   runtime-checks:
+    name: Warehouse runtime checks
     runs-on: ubuntu-latest
 
     defaults:
@@ -24,7 +25,7 @@ jobs:
       BQ_SNAPSHOTS_DATASET: ${{ secrets.BQ_SNAPSHOTS_DATASET }}
 
     steps:
-      - name: Checkout repository
+      - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Check runtime configuration
@@ -32,12 +33,12 @@ jobs:
         run: |
           if [ -z "${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}" ] || [ -z "${GCP_PROJECT_ID}" ]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping scheduled runtime checks because required BigQuery secrets are not configured."
+            echo "Warehouse runtime checks are disabled because required repository secrets are not configured."
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Set up Python
+      - name: Set up Python 3.11
         if: steps.config.outputs.enabled == 'true'
         uses: actions/setup-python@v5
         with:

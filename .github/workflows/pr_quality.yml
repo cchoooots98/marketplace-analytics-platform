@@ -1,4 +1,4 @@
-name: dbt_contracts
+name: pr_quality
 
 on:
   pull_request:
@@ -6,8 +6,54 @@ on:
     branches:
       - main
 
+concurrency:
+  group: pr-quality-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  dbt-parse:
+  python_quality:
+    name: Python quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install base dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run repository lint checks
+        run: python tasks.py lint
+
+      - name: Check Python formatting
+        run: python tasks.py format-check
+
+  python_tests:
+    name: Python tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install base dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Python test suite
+        run: python tasks.py test
+
+  dbt_contracts:
+    name: dbt contracts
     runs-on: ubuntu-latest
 
     defaults:
@@ -16,10 +62,10 @@ jobs:
         working-directory: marketplace_analytics_dbt
 
     steps:
-      - name: Checkout repository
+      - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -62,3 +108,7 @@ jobs:
         run: >
           python tasks.py dashboard-validate
           --manifest marketplace_analytics_dbt/target_ci/manifest.json
+
+      - name: Clean dbt artifacts
+        if: always()
+        run: rm -rf target target_* logs
