@@ -8,7 +8,7 @@
         "MerchantPulse",
         "Executive"
       ],
-      "screenshot_path": "dashboards/screenshots/executive_overview_v1.svg",
+      "screenshot_path": "dashboards/screenshots/executive_overview_final.png",
       "narrative_intent": "Establish the top-line commercial and service-health signal before drilling into seller and fulfillment ownership.",
       "dashboard_copy": [
         "GMV excludes cancelled orders by contract.",
@@ -181,7 +181,7 @@
             },
             {
               "source_model": "mart_exec_daily",
-              "name": "avg_review_score"
+              "name": "review_score_sum"
             },
             {
               "source_model": "mart_exec_daily",
@@ -268,11 +268,19 @@
             },
             {
               "source_model": "mart_exec_daily",
-              "name": "cancellation_rate"
+              "name": "cancelled_orders_count"
             },
             {
               "source_model": "mart_exec_daily",
-              "name": "late_delivery_rate"
+              "name": "orders_count"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "late_orders_count"
+            },
+            {
+              "source_model": "mart_exec_daily",
+              "name": "delivered_orders_count"
             }
           ],
           "filter_names": [
@@ -325,7 +333,7 @@
             },
             {
               "source_model": "mart_exec_daily",
-              "name": "avg_review_score"
+              "name": "review_score_sum"
             },
             {
               "source_model": "mart_exec_daily",
@@ -346,11 +354,12 @@
         "MerchantPulse",
         "Seller Ops"
       ],
-      "screenshot_path": "dashboards/screenshots/seller_operations_v1.svg",
+      "screenshot_path": "dashboards/screenshots/seller_operations_final.png",
       "narrative_intent": "Translate the executive signal into accountable seller-level operational and commercial ownership.",
       "dashboard_copy": [
         "The dashboard covers the full seller-order population from mart_seller_performance.",
-        "Seller labels may fall back to seller_id when dimension attributes are missing.",
+        "Rate-based cards prioritize sellers with at least five supporting seller orders, delivered orders, or commercial orders before low-volume outliers.",
+        "Seller labels are compact display values; seller_id remains available for exact filtering and drill-through.",
         "Operational defect rate means cancelled or late seller orders."
       ],
       "filters": [
@@ -453,7 +462,7 @@
           "allowed_join_models": [
             "dim_seller"
           ],
-          "narrative_intent": "Shows which sellers convert their demand into higher-value commercial baskets.",
+          "narrative_intent": "Shows which sellers convert scaled demand into higher-value commercial baskets after a minimum commercial-order support check.",
           "output_columns": [
             "seller_id",
             "seller_label",
@@ -523,7 +532,7 @@
           "allowed_join_models": [
             "dim_seller"
           ],
-          "narrative_intent": "Ranks operational risk owners whose delivered orders are slipping the SLA most often.",
+          "narrative_intent": "Prioritizes sellers with enough delivered-order support, then ranks them by late-order burden and late-delivery rate.",
           "output_columns": [
             "seller_id",
             "seller_label",
@@ -593,7 +602,7 @@
           "allowed_join_models": [
             "dim_seller"
           ],
-          "narrative_intent": "Separates seller-side attrition from platform-wide demand softness.",
+          "narrative_intent": "Prioritizes sellers with enough seller-order support, then ranks them by cancelled-order burden and cancellation rate.",
           "output_columns": [
             "seller_id",
             "seller_label",
@@ -663,7 +672,7 @@
           "allowed_join_models": [
             "dim_seller"
           ],
-          "narrative_intent": "Combines late and cancelled order risk into one seller-level action list.",
+          "narrative_intent": "Combines late and cancelled order risk into one seller-level action list ordered by operational burden before rate severity.",
           "output_columns": [
             "seller_id",
             "seller_label",
@@ -734,7 +743,7 @@
         "MerchantPulse",
         "Fulfillment Ops"
       ],
-      "screenshot_path": "dashboards/screenshots/fulfillment_operations_v1.svg",
+      "screenshot_path": "dashboards/screenshots/fulfillment_operations_final.png",
       "narrative_intent": "Explain where delivery friction is happening and which external context signals line up with the late-order population.",
       "dashboard_copy": [
         "Weather fields are proxy delivery-weather context, not customer-level geospatial truth.",
@@ -789,7 +798,7 @@
             "orders_count",
             "late_orders_count",
             "delivered_orders_count",
-            "late_delivery_rate"
+            "late_delivery_rate_pct"
           ],
           "dependency_columns": [
             {
@@ -837,7 +846,8 @@
           "allowed_join_models": [],
           "narrative_intent": "Shows how much of the order population falls into each delay severity bucket.",
           "output_columns": [
-            "delivery_delay_bucket",
+            "distribution_view",
+            "delay_bucket",
             "orders_count"
           ],
           "dependency_columns": [
@@ -873,13 +883,12 @@
           "id": "fulfillment_holiday_impact",
           "title": "Holiday Impact",
           "sql_path": "dashboards/sql/core_trio/fulfillment/fulfillment_holiday_impact.sql",
-          "visualization": "line",
+          "visualization": "combo",
           "source_model": "mart_fulfillment_ops",
           "allowed_join_models": [],
           "narrative_intent": "Tests whether holiday purchase cohorts change demand volume or late-order risk.",
           "output_columns": [
-            "purchase_date",
-            "is_purchase_on_holiday",
+            "holiday_cohort",
             "orders_count",
             "late_delivery_rate"
           ],
@@ -921,17 +930,18 @@
           ]
         },
         {
-          "id": "fulfillment_proxy_weather_impact",
-          "title": "Proxy Weather Impact",
-          "sql_path": "dashboards/sql/core_trio/fulfillment/fulfillment_proxy_weather_impact.sql",
-          "visualization": "scatter",
+          "id": "fulfillment_late_rate_by_precipitation_bucket",
+          "title": "Late Rate by Precipitation Bucket",
+          "sql_path": "dashboards/sql/core_trio/fulfillment/fulfillment_late_rate_by_precipitation_bucket.sql",
+          "visualization": "combo",
           "source_model": "mart_fulfillment_ops",
           "allowed_join_models": [],
-          "narrative_intent": "Keeps the weather story honest by using proxy delivery-day context and explicit order weighting.",
+          "narrative_intent": "Turns proxy precipitation into business-readable risk bands so the weather story becomes decision-friendly.",
           "output_columns": [
-            "purchase_date",
-            "avg_delivery_precipitation_total",
-            "avg_delivery_temperature_max",
+            "precipitation_bucket",
+            "bucket_sort",
+            "delivered_orders_count",
+            "late_orders_count",
             "late_delivery_rate",
             "orders_count"
           ],
@@ -955,6 +965,59 @@
             {
               "source_model": "mart_fulfillment_ops",
               "name": "avg_delivery_precipitation_total"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "orders_count"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "late_orders_count"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "delivered_orders_count"
+            }
+          ],
+          "filter_names": [
+            "date_range",
+            "customer_state",
+            "delivery_delay_bucket",
+            "holiday_flag"
+          ]
+        },
+        {
+          "id": "fulfillment_late_rate_by_temperature_bucket",
+          "title": "Late Rate by Temperature Bucket",
+          "sql_path": "dashboards/sql/core_trio/fulfillment/fulfillment_late_rate_by_temperature_bucket.sql",
+          "visualization": "combo",
+          "source_model": "mart_fulfillment_ops",
+          "allowed_join_models": [],
+          "narrative_intent": "Turns proxy max temperature into ordered risk bands so the dashboard highlights direction rather than scatter noise.",
+          "output_columns": [
+            "temperature_bucket",
+            "bucket_sort",
+            "delivered_orders_count",
+            "late_orders_count",
+            "late_delivery_rate",
+            "orders_count"
+          ],
+          "dependency_columns": [
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "purchase_date"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "customer_state"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "delivery_delay_bucket"
+            },
+            {
+              "source_model": "mart_fulfillment_ops",
+              "name": "is_purchase_on_holiday"
             },
             {
               "source_model": "mart_fulfillment_ops",
@@ -1012,7 +1075,7 @@
             },
             {
               "source_model": "mart_fulfillment_ops",
-              "name": "avg_late_days"
+              "name": "late_days_sum"
             },
             {
               "source_model": "mart_fulfillment_ops",

@@ -1,7 +1,7 @@
--- Fulfillment trend: keep cancellation visible beside delivery risk rather
--- than hiding attrition behind a service-only view.
+-- Fulfillment weekly trend: roll cancellations to week cohorts so the
+-- dashboard stays decision-oriented instead of reading like a noisy monitor.
 select
-    purchase_date,
+    date_trunc(purchase_date, week(monday)) as purchase_date,
     sum(cancelled_orders_count) as cancelled_orders_count
 from `marts.mart_fulfillment_ops`
 where 1 = 1
@@ -9,5 +9,5 @@ where 1 = 1
     [[and {{customer_state}}]]
     [[and {{delivery_delay_bucket}}]]
     [[and {{holiday_flag}}]]
-group by purchase_date
-order by purchase_date
+group by 1
+order by 1

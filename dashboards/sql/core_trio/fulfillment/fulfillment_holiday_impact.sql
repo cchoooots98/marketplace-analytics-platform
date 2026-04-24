@@ -1,8 +1,11 @@
--- Fulfillment trend: compare holiday and non-holiday purchase cohorts without
--- redefining the warehouse-owned holiday flag.
+-- Fulfillment cohort comparison: aggregate holiday and non-holiday purchase
+-- cohorts so sparse holiday dates do not turn the chart into a noisy daily
+-- monitor.
 select
-    purchase_date,
-    is_purchase_on_holiday,
+    case
+        when is_purchase_on_holiday then "Holiday"
+        else "Non-Holiday"
+    end as holiday_cohort,
     sum(orders_count) as orders_count,
     safe_divide(
         sum(late_orders_count),
@@ -14,5 +17,10 @@ where 1 = 1
     [[and {{customer_state}}]]
     [[and {{delivery_delay_bucket}}]]
     [[and {{holiday_flag}}]]
-group by purchase_date, is_purchase_on_holiday
-order by purchase_date, is_purchase_on_holiday
+group by holiday_cohort
+order by
+    case holiday_cohort
+        when "Holiday" then 1
+        when "Non-Holiday" then 2
+        else 3
+    end

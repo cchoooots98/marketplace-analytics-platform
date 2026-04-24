@@ -1,9 +1,11 @@
--- Executive trend: show revenue and demand on the same purchase-date cohort.
+-- Executive trend: roll daily volatility into weekly cohorts so the dashboard
+-- reads like a management summary instead of an operations monitor.
 select
-    calendar_date,
-    gmv,
-    orders_count
+    date_trunc(calendar_date, week(monday)) as calendar_date,
+    sum(gmv) as gmv,
+    sum(orders_count) as orders_count
 from `marts.mart_exec_daily`
 where 1 = 1
     [[and {{date_range}}]]
-order by calendar_date
+group by 1
+order by 1

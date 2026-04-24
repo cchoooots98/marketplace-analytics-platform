@@ -1,20 +1,10 @@
--- Fulfillment bar chart: weight late-day averages by the late-order population
--- so severe but sparse slices do not dominate the regional ranking.
+-- Fulfillment bar chart: aggregate the mart-published late-day numerator and
+-- late-order support count so severity stays additive across slices.
 select
     customer_state,
     safe_divide(
-        sum(
-            case
-                when avg_late_days is not null then avg_late_days * late_orders_count
-                else 0
-            end
-        ),
-        sum(
-            case
-                when avg_late_days is not null then late_orders_count
-                else 0
-            end
-        )
+        sum(late_days_sum),
+        nullif(sum(late_orders_count), 0)
     ) as avg_late_days,
     sum(late_orders_count) as late_orders_count
 from `marts.mart_fulfillment_ops`

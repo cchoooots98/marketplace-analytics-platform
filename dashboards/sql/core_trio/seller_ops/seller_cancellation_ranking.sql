@@ -1,6 +1,15 @@
 -- Seller operations ranking: keep the numerator and denominator aligned to the
 -- published seller-order population.
-with seller_rollup as (
+-- Prioritize sellers with enough seller-order support for a stable rate, then
+-- sort by cancelled-order burden so the table behaves like an action list
+-- instead of a small-sample outlier board.
+with params as (
+
+    select 5 as min_orders_for_cancellation_rate_ranking
+
+),
+
+seller_rollup as (
 
     select
         seller_id,
@@ -17,25 +26,48 @@ with seller_rollup as (
         [[and {{seller_state}}]]
     group by seller_id
 
+),
+
+ranked_sellers as (
+
+    select
+        seller_id,
+        case
+            when seller_city is null or seller_state is null
+                then concat(left(seller_id, 8), "...")
+            else concat(
+                seller_city, ", ", seller_state, " (", left(seller_id, 8), "...)"
+            )
+        end as seller_label,
+        seller_state,
+        cancelled_orders_count,
+        orders_count,
+        orders_count >= min_orders_for_cancellation_rate_ranking
+            as meets_min_order_support
+    from seller_rollup
+    cross join params
+
 )
 
 select
     seller_id,
-    case
-        when seller_city is null or seller_state is null then seller_id
-        else concat(seller_city, ", ", seller_state, " (", seller_id, ")")
-    end as seller_label,
+    seller_label,
     seller_state,
     safe_divide(cancelled_orders_count, orders_count) as cancellation_rate,
     cancelled_orders_count,
     orders_count
-from seller_rollup
+from ranked_sellers
 order by
+    case
+        when meets_min_order_support then 0
+        else 1
+    end,
     case
         when safe_divide(cancelled_orders_count, orders_count) is null then 1
         else 0
     end,
-    cancellation_rate desc,
     cancelled_orders_count desc,
+    cancellation_rate desc,
+    orders_count desc,
     seller_id
 limit 15

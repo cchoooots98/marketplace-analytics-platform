@@ -1,19 +1,10 @@
--- Executive KPI card: weight daily review averages by published review volume
--- so sparse days do not distort the selected-period sentiment score.
+-- Executive KPI card: aggregate the mart-published additive review numerator
+-- and support count so BI does not have to reverse-engineer weighting from a
+-- pre-averaged daily column.
 select
     safe_divide(
-        sum(
-            case
-                when avg_review_score is not null then avg_review_score * reviews_count
-                else 0
-            end
-        ),
-        sum(
-            case
-                when avg_review_score is not null then reviews_count
-                else 0
-            end
-        )
+        sum(review_score_sum),
+        nullif(sum(reviews_count), 0)
     ) as avg_review_score
 from `marts.mart_exec_daily`
 where 1 = 1

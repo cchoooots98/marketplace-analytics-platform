@@ -1,4 +1,6 @@
 -- Seller operations ranking: commercial owner list ordered by published GMV.
+-- Keep seller_label compact so bar charts remain readable while seller_id stays
+-- available for exact drill-through and filtering.
 with seller_rollup as (
 
     select
@@ -20,8 +22,9 @@ with seller_rollup as (
 select
     seller_id,
     case
-        when seller_city is null or seller_state is null then seller_id
-        else concat(seller_city, ", ", seller_state, " (", seller_id, ")")
+        when seller_city is null or seller_state is null
+            then concat(left(seller_id, 8), "...")
+        else concat(seller_city, ", ", seller_state, " (", left(seller_id, 8), "...)")
     end as seller_label,
     seller_state,
     gmv
