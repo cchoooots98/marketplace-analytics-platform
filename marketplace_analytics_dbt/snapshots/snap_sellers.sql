@@ -14,8 +14,8 @@
 }}
 
 -- Snapshot the cleaned seller master-data contract rather than raw batch
--- metadata. This demonstrates SCD2-style history tracking without creating
--- false new versions on every rerun.
+-- metadata. This keeps SCD2-style history tracking without creating false
+-- new versions on every rerun.
 select
     seller_id,
     seller_zip_code_prefix,

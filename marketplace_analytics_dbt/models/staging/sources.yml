@@ -557,11 +557,10 @@ sources:
         domain: "external_enrichment"
         contract_layer: "raw"
         notes: >
-          External enrichment is loaded as a bounded backfill for this portfolio
-          project. Freshness thresholds below document the intended production
-          SLA for runtime operations. Pull-request CI stays parse-only, while
-          the scheduled runtime workflow can execute warehouse-backed
-          freshness checks.
+          External enrichment is loaded as a bounded backfill for this platform.
+          Freshness thresholds below document the intended runtime SLA.
+          Pull-request CI stays parse-only, while the scheduled runtime
+          workflow can execute warehouse-backed freshness checks.
 
     tables:
       - name: holidays
