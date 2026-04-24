@@ -1,9 +1,15 @@
 # Dashboard Specifications
 
-This document defines the Core Trio dashboard package for MerchantPulse.
+This document defines the published dashboard contract for MerchantPulse. It is
+the authoritative reference for the Core Trio package: dashboard audiences,
+approved marts, filter mappings, screenshot evidence, and SQL result contracts.
+
 Dashboards read governed marts only. If a chart needs logic that does not
 exist in a mart, the mart is the place to fix it; business logic must not
 live inside Metabase.
+
+For KPI definitions, see `docs/metric_definitions.md`. For warehouse contract
+ownership, see `docs/data_contracts.md`.
 
 The machine-readable dashboard contract lives in
 `dashboards/specs/core_trio.json`. Each card now separates two interface

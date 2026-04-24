@@ -1,10 +1,17 @@
 # Metric Definitions
 
-This document defines the canonical KPI rules for MerchantPulse. Dashboards
-must read these metrics from governed marts instead of rejoining facts in the
-business-intelligence layer. When a dashboard rolls metrics across multiple
-mart rows, it must use the mart-published additive support columns instead of
-averaging precomputed rates or averages.
+This document defines the canonical KPI rules for MerchantPulse. It is the
+authoritative semantic reference for published metrics, denominators, grain,
+and weighting behavior across executive, seller, fulfillment, and
+customer-experience reporting.
+
+Dashboards must read these metrics from governed marts instead of rejoining
+facts in the business-intelligence layer. When a dashboard rolls metrics across
+multiple mart rows, it must use the mart-published additive support columns
+instead of averaging precomputed rates or averages.
+
+For dashboard usage, see `docs/dashboard_specs.md`. For warehouse grain and
+mart ownership, see `docs/data_contracts.md`.
 
 ## Metric Rules
 

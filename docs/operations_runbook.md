@@ -1,9 +1,15 @@
 # Operations Runbook
 
-This runbook explains how to set up, run, rerun, and troubleshoot
-MerchantPulse as a batch-oriented data platform. The goal is operational
-clarity: source freshness, snapshots, dbt builds, and dashboard-facing marts
-should all have an explicit run order and failure path.
+This runbook defines how to set up, run, rerun, and troubleshoot MerchantPulse
+as a batch-oriented data platform. It is the primary operator reference for
+environment setup, execution order, rerun strategy, failure handling, and
+published BI refresh flow.
+
+The goal is operational clarity: source freshness, snapshots, dbt builds, and
+dashboard-facing marts should all have an explicit run order and failure path.
+
+For platform context, see `docs/architecture.md`. For data-layer guarantees,
+see `docs/data_contracts.md`.
 
 ## 1. Local Prerequisites
 

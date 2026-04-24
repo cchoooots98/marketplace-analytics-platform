@@ -1,11 +1,12 @@
 # Architecture: MerchantPulse
 
-MerchantPulse is an analytics platform for marketplace revenue, seller
-operations, fulfillment quality, and customer-experience reporting. The V1 BI
-surface is the Core Trio dashboard package: Executive Overview, Seller
-Operations, and Fulfillment Operations. The design follows an ELT pattern:
-source data is loaded into BigQuery first, then dbt transforms it into governed
-analytics layers.
+This document defines the system boundary, delivery flow, warehouse layering,
+and published analytics surfaces for MerchantPulse. It is the primary reference
+for understanding how ingestion, BigQuery, dbt, dashboard publication, and
+quality gates fit together as one operating platform.
+
+For contract-level details, see `docs/data_contracts.md`. For operator flow and
+rerun handling, see `docs/operations_runbook.md`.
 
 ## 1. Business Context
 

@@ -1,7 +1,11 @@
 # Architecture Decisions
 
-This document records the major design decisions for MerchantPulse. Each
-decision explains the trade-off, not just the selected implementation.
+This document records the major design decisions for MerchantPulse in ADR-style
+form. Each entry captures the context, selected approach, and trade-off so the
+repository preserves design intent alongside implementation details.
+
+For system shape, see `docs/architecture.md`. For the resulting contracts, see
+`docs/data_contracts.md`.
 
 ## ADR 001: Use BigQuery as the warehouse
 

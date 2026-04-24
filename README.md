@@ -1,64 +1,57 @@
-# MerchantPulse: Marketplace Revenue & Fulfillment Analytics Platform
+# MerchantPulse: Marketplace Analytics Platform
 
-MerchantPulse is a marketplace analytics platform that loads transactional and
-enrichment data into BigQuery, models it with dbt under explicit data quality
-contracts, and serves the resulting governed marts to executive and operations
-dashboards.
+MerchantPulse is a batch-oriented marketplace analytics platform that loads
+transactional and enrichment data into BigQuery, models it with dbt under
+explicit data quality contracts, and publishes governed marts for business
+intelligence consumption.
 
-The current release covers unified ingestion, warehouse modeling, snapshots,
-source freshness SLAs, mart contracts, and the version-controlled Core Trio
-dashboard package. Live Metabase publication is operator-managed in Metabase
-OSS. Airflow DAG contracts are version-controlled in the repository, while the
-follow-on experience dashboards remain on the roadmap.
+The current release delivers the ingestion control plane, warehouse contracts,
+Core Trio dashboard package, local Metabase runtime, and GitHub Actions quality
+gates needed to operate the platform as a version-controlled analytics product.
 
-## Business Problem
+## Platform Summary
 
-Marketplace teams often have order, seller, payment, delivery, and review data
-spread across different systems. Executives need reliable revenue and customer
-experience metrics. Operations teams need seller and fulfillment signals. Data
-teams need one governed place where metric logic, table grains, tests, and
-lineage are easy to inspect.
+MerchantPulse is designed for one recurring analytics problem: marketplace
+teams need reliable commercial, fulfillment, and seller-performance reporting,
+but the source data arrives in multiple shapes and changes on different
+cadences.
 
-MerchantPulse turns that problem into an end-to-end platform:
+The platform turns that into one controlled delivery path:
 
 ```text
 business questions -> ingestion -> warehouse modeling -> data quality
--> metrics -> dashboards -> reproducible delivery
+-> marts -> dashboards -> reproducible operations
 ```
 
-The incremental ingestion control plane persists current batch state in
-BigQuery so publish recovery can resume from warehouse state instead of
-depending on landing files remaining on disk.
+The implementation follows an ELT pattern: data lands in BigQuery first, dbt
+applies warehouse-layer contracts, and dashboards read published marts rather
+than rebuilding metric logic in the BI layer.
 
-## Current Build Status
+## Release Scope
 
-| Area | Status | Evidence |
-|---|---|---|
-| Project charter and architecture | Implemented | `README.md`, `docs/architecture.md` |
-| Local Python dependency set | Implemented | `requirements.txt`, `requirements-orchestration.txt`, `tasks.py` |
-| BigQuery configuration template | Implemented | `.env.example` |
-| BigQuery connection smoke test | Implemented | `tests/test_bigquery_connection.py` |
-| dbt project initialization | Implemented | `marketplace_analytics_dbt/dbt_project.yml` |
-| Ingestion loaders | Implemented | `ingestion/main.py`, `ingestion/workflows/`, `ingestion/olist/`, `ingestion/holidays/`, `ingestion/weather/` |
-| dbt staging, intermediate, and marts | Implemented | `marketplace_analytics_dbt/models/` contains staging, intermediate, facts, dimensions, and marts |
-| Reliability and history controls | Implemented | source freshness SLAs, snapshots, singular DQ tests, runbook, and ADR updates |
-| Scheduled runtime warehouse checks | Implemented | `.github/workflows/dbt_runtime_checks.yml` runs freshness, snapshots, and dbt tests on a schedule when secrets are configured |
-| Airflow orchestration | Implemented in repo | `requirements-orchestration.txt` plus `airflow/dags/merchantpulse_orchestration.py` define bootstrap and incremental DAG contracts |
-| Metabase Core Trio dashboard package | Implemented in repo | `docker-compose.yml`, `dashboards/specs/core_trio.json`, and `docs/dashboard_specs.md` define the local runtime and the dashboard contracts |
-| GitHub Actions CI | Implemented | `.github/workflows/dbt_contracts.yml` |
-| Core Trio exposures and mart contracts | Implemented | `marketplace_analytics_dbt/models/exposures.yml`, mart `schema.yml` files |
+### Released now
 
-## Business Questions
+- Python ingestion for Olist transactional data plus holiday and weather
+  enrichment
+- BigQuery raw, staging, intermediate, conformed, and mart contracts
+- dbt tests, source freshness SLAs, snapshots, and dashboard lineage exposures
+- Core Trio dashboard package:
+  `Executive Overview`, `Seller Operations`, and `Fulfillment Operations`
+- Local Metabase runtime with version-controlled SQL assets and reference
+  captures
+- GitHub Actions split into pull-request quality gates and warehouse-backed
+  runtime checks
+- Airflow DAG contracts for bootstrap and incremental orchestration
 
-| # | Question | Primary consumer |
-|---|---|---|
-| 1 | What are daily and weekly GMV, order count, and AOV trends? | Executives |
-| 2 | Which sellers and regions have fulfillment problems? | Operations |
-| 3 | How do holidays and weather events relate to order volume or delays? | Operations and analytics |
-| 4 | How are cancellation rate and payment success rate changing? | Executives and finance |
-| 5 | How does repeat purchase behavior evolve over time? | Growth and analytics |
+### Planned next
 
-## Target Architecture
+- Published business-intelligence surfaces for
+  `mart_customer_experience` and `mart_seller_experience`
+- Extended orchestration operating model around the checked-in Airflow DAGs
+- Additional warehouse-backed runtime monitoring as environment ownership
+  matures
+
+## Architecture And Delivery Flow
 
 ```mermaid
 flowchart LR
@@ -68,13 +61,13 @@ flowchart LR
 
     ingest["Python batch ingestion"]
     raw["BigQuery raw datasets"]
-    dbt["dbt transformations"]
-    marts["BigQuery marts"]
-    metabase["Metabase dashboards"]
+    dbt["dbt transformations and contracts"]
+    marts["Governed marts"]
+    metabase["Metabase BI surface"]
 
-    airflow["Airflow DAGs"]
+    airflow["Airflow DAG contracts"]
+    ci["GitHub Actions quality gates"]
     docker["Docker Compose runtime"]
-    ci["GitHub Actions CI"]
 
     olist --> ingest
     holidays --> ingest
@@ -85,212 +78,122 @@ flowchart LR
     marts --> metabase
 
     airflow -. schedules .-> ingest
-    airflow -. runs .-> dbt
-    docker -. starts .-> airflow
-    docker -. starts .-> metabase
+    airflow -. triggers .-> dbt
     ci -. validates .-> dbt
+    docker -. runs .-> metabase
+    docker -. supports .-> airflow
 ```
 
-For the full system view, see [`docs/architecture.md`](docs/architecture.md).
+Warehouse layering follows a grain-first contract model:
 
-## Tool Stack
-
-| Tool | Role | Why it belongs here |
+| Layer | Purpose | Contract |
 |---|---|---|
-| BigQuery | Cloud data warehouse | Scalable SQL-first analytics storage, similar to Snowflake or Redshift |
-| dbt-bigquery | Transformation and documentation | Version-controlled SQL models, tests, lineage, and docs |
-| Python | Ingestion and validation | Batch loaders, API calls, and smoke checks |
-| Metabase | Business intelligence | Stakeholder-facing dashboards over governed marts |
-| Airflow | Orchestration | Directed Acyclic Graph scheduling for repeatable pipelines |
-| Docker Compose | Local runtime | Reproducible local services for Airflow and Metabase |
-| GitHub Actions | Continuous integration | Automated linting, tests, and dbt validation on pull requests |
+| Raw | Preserve source fidelity | Source rows plus `ingested_at_utc`, `source_file_name`, `batch_id` |
+| Staging | Standardize shape and types | Rename, cast, normalize, and deduplicate source-shaped records |
+| Intermediate | Reusable business logic | Delivery flags, order value, review metrics, seller-day logic |
+| Conformed | Shared dimensions and facts | Reusable `dim_*` and `fact_*` models with governed keys |
+| Marts | Published KPI tables | BI-facing subject-area contracts with one documented grain per row |
 
-## Data Sources
+## Published Analytics Surfaces
 
-| Source | Type | Main entities | Target cadence |
+| Surface | Primary mart | Grain | Primary audience |
 |---|---|---|---|
-| Olist Brazilian E-Commerce Dataset | Transactional core | orders, items, payments, reviews, customers, sellers, products, geolocation | One-time historical load |
-| Nager.Date API | Calendar enrichment | public holidays by country and date | Annual refresh |
-| OpenWeather API | Weather enrichment | daily weather context for Sao Paulo | Daily or backfill batch |
+| Executive Overview | `mart_exec_daily` | One row per `calendar_date` | Executives and finance |
+| Seller Operations | `mart_seller_performance` | One row per `seller_id`, `calendar_date` | Marketplace operations |
+| Fulfillment Operations | `mart_fulfillment_ops` | One row per `purchase_date`, `customer_state`, `delivery_delay_bucket` | Fulfillment operations and analytics |
 
-## Warehouse Layers
+Reference captures for the current published layouts live under
+`dashboards/screenshots/` and are validated against the version-controlled
+dashboard specification in `dashboards/specs/core_trio.json`.
 
-The warehouse follows a common raw -> staging -> reusable logic -> conformed
-contracts -> marts pattern. Think of it like a kitchen: raw data is the
-delivered ingredients, staging is washed and chopped ingredients, intermediate
-models are reusable components, conformed facts and dimensions are the shared
-prepared base, and marts are plated dishes for business users.
+## Quality And Operating Model
 
-| Layer | Target dataset | Responsibility |
-|---|---|---|
-| Raw | `raw_olist`, `raw_ext` | Preserve source records with `ingested_at_utc`, `source_file_name`, and `batch_id` |
-| Staging | `staging` | Standardize names, types, enums, timestamps, and null-like values |
-| Intermediate | `intermediate` | Centralize reusable business logic such as delivery flags and order value |
-| Conformed | `marts` datasets for `dim_*` and `fact_*` models | Publish reusable dimensions and facts shared across subject areas |
-| Marts | `marts` | Serve stable subject-area KPI tables with one documented grain per model |
+MerchantPulse treats documentation, tests, and runtime operations as part of
+the warehouse contract rather than as follow-on notes.
 
-## Published Analytics Outputs
+| Control area | Current implementation |
+|---|---|
+| Python quality gates | `python tasks.py lint`, `python tasks.py format-check`, `python tasks.py test` |
+| dbt structural validation | `dbt deps`, `dbt parse --no-partial-parse`, dashboard asset validation |
+| Warehouse-backed runtime checks | Scheduled `dbt source freshness`, `dbt snapshot`, and `dbt test` workflow |
+| Dashboard governance | Version-controlled SQL, screenshot evidence, exposures, and spec validation |
+| Rerun discipline | Idempotent ingestion plus runbook-defined bootstrap and daily runtime flows |
 
-| Output | Core models | Main metrics |
-|---|---|---|
-| Executive Overview | `mart_exec_daily` | GMV, orders, AOV, cancellation rate, late delivery rate, average review score |
-| Seller Operations | `mart_seller_performance` | seller GMV, late delivery rate, cancellation rate, operational defect rate |
-| Fulfillment Operations | `mart_fulfillment_ops` | delay rate by state, delay bucket mix, holiday impact, weather-bucket late rate, average late days |
+The pull-request workflow is intentionally secret-free. Warehouse-backed checks
+run separately so pull requests stay fast while runtime SLAs and data quality
+remain observable in configured environments.
 
-Roadmap expansion:
+## Quick Start
 
-- `mart_customer_experience` for customer-experience storytelling on the shared fulfillment cohort.
-- `mart_seller_experience` for attributable seller review coverage and sentiment.
-
-Metric definitions live in
-[`docs/metric_definitions.md`](docs/metric_definitions.md).
-
-## Local Setup
-
-The primary developer interface is `python tasks.py <command>`. `make <target>`
-remains available as a thin compatibility wrapper.
+The standard repository entrypoint is `python tasks.py <command>`. `make`
+targets remain available only as thin compatibility wrappers.
 
 1. Create and activate a Python 3.11 virtual environment.
-2. Initialize starter folders and your local `.env` file.
+2. Initialize local folders and `.env` template.
 
 ```bash
 python tasks.py setup
 ```
 
-3. Install the base runtime, dbt, lint, and test dependencies.
+3. Install the base dependency set.
 
 ```bash
 python tasks.py install
 ```
 
-Underlying equivalent:
-
-```bash
-pip install -r requirements.txt
-```
-
-4. Install orchestration dependencies only if you want to prototype future
-   Airflow work.
+4. Install orchestration dependencies only if you need the Airflow surface.
 
 ```bash
 python tasks.py install-orchestration
 ```
 
-Underlying equivalent:
+5. Copy `marketplace_analytics_dbt/profiles.yml.example` into your local dbt
+   profiles directory and fill environment-backed values.
+6. Run the standard repository checks.
 
 ```bash
-pip install -r requirements-orchestration.txt
+python tasks.py lint
+python tasks.py format-check
+python tasks.py test
+python tasks.py dashboard-validate
 ```
 
-5. Fill in local values in `.env`.
-6. Run the BigQuery smoke test after credentials are configured.
-
-```bash
-pytest tests/test_bigquery_connection.py -q
-```
-
-5. Configure dbt by copying `marketplace_analytics_dbt/profiles.yml.example`
-   into your local dbt profile location and filling values through environment
-   variables.
-
-7. Validate dbt configuration once the profile exists.
+7. Validate warehouse connectivity and dbt configuration after credentials are
+   configured.
 
 ```bash
 python tasks.py dbt-debug
 python tasks.py dbt-build --select mart_exec_daily
 ```
 
-8. Validate the version-controlled dashboard package and start the local
-   Metabase runtime.
+8. Start the local BI runtime when you need the published dashboard surface.
 
 ```bash
-python tasks.py dashboard-validate
 python tasks.py metabase-up
+python tasks.py metabase-logs
 ```
 
-9. In Metabase, connect BigQuery with the service account JSON and sync only
-   the `marts` dataset. Then build the `MerchantPulse / Executive`,
-   `MerchantPulse / Seller Ops`, and `MerchantPulse / Fulfillment Ops`
-   collections from the SQL assets in `dashboards/sql/core_trio/`. In
-   Metabase OSS, this saved-question publication step is still manual, while
-   the repository keeps the SQL, contract metadata, and reference captures in
-   version control.
+## Reader Paths
 
-## Documentation Map
+Use the repository as an entrypoint into the relevant operating document:
 
-| Document | Purpose |
+| Reader | Start here |
 |---|---|
-| [`docs/architecture.md`](docs/architecture.md) | Target architecture, diagrams, boundaries, and roadmap |
-| [`docs/data_contracts.md`](docs/data_contracts.md) | Active table grains, keys, and data quality contracts |
-| [`docs/metric_definitions.md`](docs/metric_definitions.md) | Canonical KPI formulas and reporting rules |
-| [`docs/operations_runbook.md`](docs/operations_runbook.md) | Setup, run order, rerun strategy, and troubleshooting |
-| [`docs/decisions.md`](docs/decisions.md) | Architecture decisions and trade-offs |
-| [`docs/dashboard_specs.md`](docs/dashboard_specs.md) | Dashboard users, charts, and mart dependencies |
+| Architecture reviewer | [docs/architecture.md](docs/architecture.md) |
+| Warehouse contract reviewer | [docs/data_contracts.md](docs/data_contracts.md) |
+| KPI / semantic reviewer | [docs/metric_definitions.md](docs/metric_definitions.md) |
+| Operator | [docs/operations_runbook.md](docs/operations_runbook.md) |
+| Dashboard / BI reviewer | [docs/dashboard_specs.md](docs/dashboard_specs.md) |
+| Trade-off reviewer | [docs/decisions.md](docs/decisions.md) |
 
-## Data Quality Strategy
+## Repository Layout
 
-- Use dbt generic schema tests as the first contract layer for keys, ranges,
-  accepted values, and relationships.
-- Use singular tests for cross-column and cross-model invariants such as
-  delivery-flag integrity and order-grain aggregation reconciliation.
-- Keep KPI logic in marts and reconciliation logic in tests so dashboards do
-  not silently redefine business metrics.
-- Validate the version-controlled dashboard specs against dbt manifest metadata
-  so screenshots, SQL assets, and exposures cannot drift independently.
-- Treat optional enrichment as nullable, but fail fast on broken transactional
-  keys or contract-defining timestamps.
-
-## Freshness Strategy
-
-- Source freshness is measured from `ingested_at_utc`, which is the warehouse
-  arrival timestamp added by ingestion.
-- Runtime operating SLAs use `warn_after = source SLA` and
-  `error_after = 2x SLA` for supported transactional and enrichment sources.
-- Current freshness contracts:
-  - `orders`: warn at 24h, error at 48h
-  - `order_items`: warn at 24h, error at 48h
-  - `order_payments`: warn at 24h, error at 48h
-  - `order_reviews`: warn at 48h, error at 96h
-  - `holidays`: warn at 30d, error at 60d
-  - `weather_daily`: warn at 48h, error at 96h
-- Pull-request GitHub Actions CI remains parse-only, so freshness is not run in
-  standard PR automation.
-- A separate scheduled GitHub Actions workflow can run warehouse-backed
-  freshness and dbt tests once credentials are configured in repository
-  secrets.
-
-## How To Troubleshoot Failures
-
-- Freshness failure: check `max(ingested_at_utc)` in the affected raw source,
-  then inspect ingestion logs and confirm the upstream loader actually ran.
-- Snapshot anomaly: confirm the source row really changed on tracked business
-  attributes, then verify the snapshot `unique_key` and `check_cols` exclude
-  batch-noise fields.
-- If seller or product attributes appear historically inconsistent in marts,
-  confirm whether the question expects current-state semantics or snapshot
-  history. In V1, line-item facts intentionally keep seller/product attributes
-  current-state and reserve history tracking for snapshot tables.
-- Payment reconciliation failure: inspect `int_order_value` aggregation grain
-  first; fan-out between items and payments is the most likely root cause.
-- Delivered-timestamp failure: inspect `stg_orders` timestamp casts and source
-  order status semantics before touching downstream marts.
-
-## Roadmap
-
-| Phase | Goal | Definition of done |
-|---|---|---|
-| Foundation | Project scope, environment, dbt initialization, architecture docs | README, architecture, env template, dbt debug path |
-| Ingestion | Load Olist, holiday, and weather data into raw datasets | Idempotent loaders, batch metadata, logging, tests |
-| dbt modeling | Build staging, intermediate, facts, dimensions, and marts | Grain documented, schema tests, custom tests, dbt docs |
-| Reliability and history | Operate freshness, snapshots, runbook, and CI contracts | freshness SLAs, snapshot tracking, troubleshooting docs, GitHub Actions parse checks, scheduled runtime checks |
-| Serving | Publish the Core Trio Metabase package from marts only | Docker Compose runtime, dashboard SQL/specs, dashboard contract validation, and reference capture artifacts |
-| V1 release packaging | Stabilize V1 release artifacts | Architecture diagrams, dbt lineage exports, dashboard reference captures |
-
-## Design Principles
-
-- Keep metric logic in the warehouse, not in dashboards.
-- Document the grain before writing a fact, intermediate model, or mart.
-- Make ingestion and transformation rerunnable without duplicate records.
-- Fail fast when core identifiers or required columns are missing.
-- Allow optional enrichment to be null, but never silently lose transaction keys.
-- Keep documentation accurate about what is built and what is planned.
+```text
+ingestion/                    Python ingestion control plane
+marketplace_analytics_dbt/    dbt models, tests, snapshots, and exposures
+dashboards/                   Dashboard specs, SQL assets, and reference captures
+airflow/                      DAG contracts for orchestration
+docs/                         Operating and architecture documents
+.github/workflows/            Pull-request and runtime quality workflows
+tasks.py                      Standard repository command entrypoint
+```

@@ -1,9 +1,16 @@
 # Data Contracts
 
-This document defines the active warehouse contracts for MerchantPulse.
+This document defines the active warehouse contracts for MerchantPulse:
+declared grain, join keys, freshness SLAs, snapshot semantics, conformed facts,
+and published marts. It is the primary reference for what each warehouse layer
+means and what downstream consumers are allowed to rely on.
+
 Contracts are considered real only when they are implemented consistently in
 dbt SQL, schema tests, singular tests, snapshots, and downstream
 documentation.
+
+For metric semantics, see `docs/metric_definitions.md`. For architecture-level
+context, see `docs/architecture.md`.
 
 ## Contract Rules
 
