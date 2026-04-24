@@ -8,8 +8,8 @@ dashboards.
 The current release covers unified ingestion, warehouse modeling, snapshots,
 source freshness SLAs, mart contracts, and the version-controlled Core Trio
 dashboard package. Live Metabase publication is operator-managed in Metabase
-OSS. Orchestration and the follow-on experience dashboards are tracked on the
-roadmap.
+OSS. Airflow DAG contracts are version-controlled in the repository, while the
+follow-on experience dashboards remain on the roadmap.
 
 ## Business Problem
 
@@ -26,6 +26,10 @@ business questions -> ingestion -> warehouse modeling -> data quality
 -> metrics -> dashboards -> reproducible delivery
 ```
 
+The incremental ingestion control plane persists current batch state in
+BigQuery so publish recovery can resume from warehouse state instead of
+depending on landing files remaining on disk.
+
 ## Current Build Status
 
 | Area | Status | Evidence |
@@ -35,11 +39,11 @@ business questions -> ingestion -> warehouse modeling -> data quality
 | BigQuery configuration template | Implemented | `.env.example` |
 | BigQuery connection smoke test | Implemented | `tests/test_bigquery_connection.py` |
 | dbt project initialization | Implemented | `marketplace_analytics_dbt/dbt_project.yml` |
-| Ingestion loaders | Implemented | `ingestion/main.py`, `ingestion/olist/`, `ingestion/holidays/`, `ingestion/weather/` |
+| Ingestion loaders | Implemented | `ingestion/main.py`, `ingestion/workflows/`, `ingestion/olist/`, `ingestion/holidays/`, `ingestion/weather/` |
 | dbt staging, intermediate, and marts | Implemented | `marketplace_analytics_dbt/models/` contains staging, intermediate, facts, dimensions, and marts |
 | Reliability and history controls | Implemented | source freshness SLAs, snapshots, singular DQ tests, runbook, and ADR updates |
 | Scheduled runtime warehouse checks | Implemented | `.github/workflows/dbt_runtime_checks.yml` runs freshness, snapshots, and dbt tests on a schedule when secrets are configured |
-| Airflow orchestration | Planned | `requirements-orchestration.txt` provides optional dependencies; `airflow/dags/` does not contain DAGs yet |
+| Airflow orchestration | Implemented in repo | `requirements-orchestration.txt` plus `airflow/dags/merchantpulse_orchestration.py` define bootstrap and incremental DAG contracts |
 | Metabase Core Trio dashboard package | Implemented in repo | `docker-compose.yml`, `dashboards/specs/core_trio.json`, and `docs/dashboard_specs.md` define the local runtime and the dashboard contracts |
 | GitHub Actions CI | Implemented | `.github/workflows/dbt_contracts.yml` |
 | Core Trio exposures and mart contracts | Implemented | `marketplace_analytics_dbt/models/exposures.yml`, mart `schema.yml` files |

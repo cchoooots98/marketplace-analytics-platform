@@ -36,12 +36,20 @@ Required values:
 | `GCP_PROJECT_ID` | Google Cloud project for BigQuery |
 | `BIGQUERY_LOCATION` | BigQuery location, for example `EU` or `US` |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Absolute path to the service account JSON file |
+| `OLIST_DATA_DIR` | Historical Olist CSV directory used by bootstrap ingestion |
+| `OLIST_LANDING_DIR` | Landing directory containing incremental batch subdirectories |
+| `INGESTION_STATE_TABLE` | Current-state control table used for incremental recovery and publish tracking |
+| `DBT_PACKAGES_INSTALL_PATH` | Local dbt package install path for repository task execution |
 | `BQ_RAW_OLIST_DATASET` | Raw Olist dataset name |
 | `BQ_RAW_EXT_DATASET` | Raw enrichment dataset name |
 | `BQ_STAGING_DATASET` | Staging dataset name |
 | `BQ_INTERMEDIATE_DATASET` | Intermediate dataset name |
 | `BQ_MARTS_DATASET` | Marts dataset name |
 | `BQ_SNAPSHOTS_DATASET` | Snapshot dataset for historical seller and product versions |
+| `NAGER_COUNTRY_CODE` | Holiday-country contract for enrichment loads |
+| `OPENWEATHER_API_KEY` / `OPENWEATHER_LATITUDE` / `OPENWEATHER_LONGITUDE` | Required weather API connection settings |
+| `OPENWEATHER_LOCATION_KEY` | Stable warehouse location grain for weather loads |
+| `OPENWEATHER_MAX_CALLS_PER_RUN` | Weather API budget guardrail for one run |
 | `METABASE_VERSION` | Pinned Metabase image tag for reproducible local runtime |
 | `METABASE_PORT` | Local Metabase UI port |
 | `METABASE_SITE_NAME` | Site name shown in the Metabase UI |
@@ -106,13 +114,21 @@ dbt debug
 Recommended operator commands from the repository root:
 
 ```bash
+python tasks.py dbt-deps
 python tasks.py dbt-parse
 python tasks.py dbt-freshness
 python tasks.py dbt-snapshot
 python tasks.py dbt-build
+python tasks.py dbt-docs-generate
 python tasks.py dashboard-validate
 python tasks.py metabase-up
 ```
+
+`python tasks.py dbt-deps` installs locked dbt packages into the local package
+path before warehouse-backed commands run. `python tasks.py dbt-docs-generate` persists the latest dbt artifacts required
+by downstream validation under `.cache/dbt_artifacts/` before the mandatory
+`target*` cleanup runs. `python tasks.py dashboard-validate` automatically uses
+that cached manifest when available.
 
 Scheduled runtime checks are also available through
 `.github/workflows/dbt_runtime_checks.yml` once repository secrets for BigQuery
@@ -164,32 +180,68 @@ The operating sequence is:
 4. Run dbt source freshness
 5. Run dbt snapshot
 6. Run dbt build
-7. Run dbt docs generate
+7. Generate dbt docs artifacts for lineage and contract validation
 8. Run dashboard asset validation
 9. Refresh BI surfaces such as Metabase
 ```
 
-Primary raw ingestion entrypoints from the repository root:
+Manual operator flows from the repository root align with the Airflow DAG
+contracts:
+
+```bash
+python tasks.py bootstrap-backfill
+python tasks.py bootstrap-backfill --skip-weather
+python tasks.py daily-runtime
+python tasks.py daily-runtime --skip-weather
+```
+
+Operator guidance:
+
+- `bootstrap-backfill` is the standard cold-start historical path. It runs
+  bootstrap ingestion, `dbt deps`, `dbt source freshness`, `dbt snapshot`,
+  `dbt build --full-refresh`, `dbt docs generate`, and dashboard validation in
+  one sequence.
+- `bootstrap-backfill` defaults to `--use-olist-date-range` unless an explicit
+  `--start-date` / `--end-date` range is supplied.
+- `bootstrap-backfill --skip-weather` is the standard same-day replay path when
+  the weather raw table was already loaded earlier and should not be fetched
+  again.
+- `daily-runtime` mirrors the incremental runtime DAG from local shell
+  execution.
+- `daily-runtime --skip-weather` is intended for controlled replays when the
+  day already has weather data loaded. If new orders batches are ingested while
+  weather is skipped, the ingestion control plane may intentionally leave
+  `publish_complete = false` until the weather catch-up run succeeds.
+
+Primary low-level ingestion entrypoints remain available when an operator needs
+finer control over one source window:
 
 ```bash
 python tasks.py ingest --use-olist-date-range
+python tasks.py ingest --mode incremental
 python tasks.py ingest --skip-olist --start-date 2026-01-01 --end-date 2026-12-31
 ```
+
+The only supported ingestion entrypoints are `python tasks.py ingest` and
+`python -m ingestion.main`. Per-source CLIs are intentionally unsupported so
+logging, configuration loading, failure handling, and state persistence stay on
+one shared control-plane path.
 
 Suggested dbt commands:
 
 ```bash
+python tasks.py dbt-deps
 python tasks.py dbt-freshness
 python tasks.py dbt-snapshot
 python tasks.py dbt-build
-cd marketplace_analytics_dbt
-dbt docs generate
+python tasks.py dbt-docs-generate
 ```
 
 Then validate the dashboard package and refresh the Metabase collections:
 
 ```bash
 python tasks.py dashboard-validate
+python tasks.py metabase-up
 python tasks.py metabase-logs
 ```
 
@@ -242,6 +294,7 @@ Operator guidance:
 | Layer | Rerun rule |
 |---|---|
 | Raw Olist | Prefer deterministic full reload or batch replacement for this historical dataset |
+| Incremental control plane | Persist current batch state in `INGESTION_STATE_TABLE`; orders reruns must resume from persisted enrichment windows instead of recomputing from missing landing files |
 | Raw holidays | Current V1 behavior is full-table replace through staging -> atomic swap because the table is small and bounded |
 | Raw weather | Current V1 behavior is full-table replace through staging -> atomic swap because the table volume is bounded; switch to date-partitioned merge once cumulative weather history grows beyond the full-replace threshold |
 | Snapshots | Re-run after source refresh; unchanged business attributes must not create new versions |

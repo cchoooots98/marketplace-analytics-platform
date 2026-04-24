@@ -23,10 +23,7 @@ with order_conservation as (
         end) as gmv,
         sum(coalesce(order_item_value, 0)) as items_value,
         sum(coalesce(order_freight_total, 0)) as freight_total,
-        sum(case
-            when order_payment_total is null then 0
-            else order_payment_total
-        end) as payment_total
+        sum(coalesce(order_payment_total, 0)) as payment_total
     from {{ ref('fact_orders') }}
     group by purchase_date
 
