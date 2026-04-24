@@ -6,16 +6,29 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
-from collections.abc import Callable, Sequence
 
 from dotenv import dotenv_values
 
 REPO_ROOT = Path(__file__).resolve().parent
+DBT_ARTIFACT_CACHE_DIR = Path(".cache/dbt_artifacts")
+DBT_MANIFEST_CACHE_PATH = DBT_ARTIFACT_CACHE_DIR / "manifest.json"
+DBT_CACHED_ARTIFACT_NAMES = (
+    "manifest.json",
+    "catalog.json",
+    "index.html",
+)
+DEFAULT_LOCAL_DBT_PACKAGES_INSTALL_PATH = "dbt_packages"
+DEFAULT_AIRFLOW_DBT_PACKAGES_INSTALL_PATH = "/opt/airflow/dbt_packages"
 SETUP_DIRECTORIES = (
+    Path("airflow/config"),
     Path("airflow/dags"),
+    Path("airflow/logs"),
+    Path("airflow/plugins"),
     Path("ingestion/olist"),
     Path("ingestion/holidays"),
     Path("ingestion/weather"),
@@ -24,9 +37,12 @@ SETUP_DIRECTORIES = (
     Path("docs"),
     Path("dashboards/screenshots"),
     Path("docker"),
+    Path("docker/airflow"),
     Path(".github/workflows"),
     Path("logs"),
     Path("data/olist"),
+    Path("data/olist_landing"),
+    Path("secrets"),
 )
 PRIMARY_COMMANDS = (
     "setup",
@@ -37,16 +53,37 @@ PRIMARY_COMMANDS = (
     "format-check",
     "test",
     "ingest",
+    "dbt-deps",
     "dbt-debug",
     "dbt-parse",
     "dbt-freshness",
     "dbt-snapshot",
     "dbt-build",
+    "dbt-docs-generate",
+    "bootstrap-backfill",
+    "daily-runtime",
     "dashboard-validate",
+    "airflow-init",
+    "airflow-up",
+    "airflow-down",
+    "airflow-logs",
     "metabase-up",
     "metabase-down",
     "metabase-logs",
 )
+DBT_PROFILE_TEMPLATE = """marketplace_analytics_dbt:
+  target: local
+  outputs:
+    local:
+      type: bigquery
+      method: service-account
+      keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS') }}"
+      project: "{{ env_var('GCP_PROJECT_ID') }}"
+      dataset: "{{ env_var('BQ_STAGING_DATASET', 'staging') }}"
+      threads: 4
+      location: "{{ env_var('BIGQUERY_LOCATION', 'EU') }}"
+      priority: interactive
+"""
 
 
 @dataclass(frozen=True)
@@ -58,6 +95,9 @@ class TaskSpec:
     handler: Callable[[Sequence[str], Path], int]
 
 
+TaskHandler = Callable[[Sequence[str], Path], int]
+
+
 def _resolve_repo_root(repo_root: Path | None = None) -> Path:
     """Resolve the repository root for task execution."""
     return (repo_root or REPO_ROOT).resolve()
@@ -66,6 +106,97 @@ def _resolve_repo_root(repo_root: Path | None = None) -> Path:
 def _dbt_project_dir(repo_root: Path | None = None) -> Path:
     """Return the dbt project directory for command execution."""
     return _resolve_repo_root(repo_root) / "marketplace_analytics_dbt"
+
+
+def _dbt_artifact_cache_dir(repo_root: Path | None = None) -> Path:
+    """Return the repository-local cache directory for persisted dbt artifacts."""
+    return _resolve_repo_root(repo_root) / DBT_ARTIFACT_CACHE_DIR
+
+
+def _create_temporary_dbt_profile_dir(repo_root: Path) -> Path:
+    """Create a temporary dbt profiles directory inside `.cache`."""
+    cache_root = repo_root / ".cache"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    profile_dir = Path(
+        tempfile.mkdtemp(
+            prefix="dbt-profile-",
+            dir=cache_root,
+        )
+    )
+    (profile_dir / "profiles.yml").write_text(
+        DBT_PROFILE_TEMPLATE,
+        encoding="utf-8",
+    )
+    return profile_dir
+
+
+def _cleanup_dbt_artifacts(project_dir: Path) -> None:
+    """Delete dbt target and log directories after every dbt invocation."""
+    for artifact_dir in project_dir.glob("target*"):
+        if artifact_dir.is_dir():
+            shutil.rmtree(artifact_dir, ignore_errors=True)
+
+    logs_dir = project_dir / "logs"
+    if logs_dir.is_dir():
+        shutil.rmtree(logs_dir, ignore_errors=True)
+
+
+def _latest_dbt_target_dir(project_dir: Path) -> Path | None:
+    """Return the most recently modified dbt target directory, if present."""
+    target_directories = [
+        artifact_dir
+        for artifact_dir in project_dir.glob("target*")
+        if artifact_dir.is_dir()
+    ]
+    if not target_directories:
+        return None
+
+    return max(
+        target_directories,
+        key=lambda artifact_dir: artifact_dir.stat().st_mtime,
+    )
+
+
+def _cache_dbt_artifacts(project_dir: Path, repo_root: Path) -> None:
+    """Copy dbt artifacts needed by downstream tasks into `.cache`."""
+    latest_target_dir = _latest_dbt_target_dir(project_dir)
+    if latest_target_dir is None:
+        return
+
+    cache_dir = _dbt_artifact_cache_dir(repo_root)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    for artifact_name in DBT_CACHED_ARTIFACT_NAMES:
+        source_path = latest_target_dir / artifact_name
+        if source_path.is_file():
+            shutil.copyfile(source_path, cache_dir / artifact_name)
+
+
+def _run_dbt_subprocess(
+    command: Sequence[str],
+    *args: str,
+    repo_root: Path,
+) -> int:
+    """Run a dbt command with an isolated temporary profile and cleanup."""
+    project_dir = _dbt_project_dir(repo_root)
+    profile_dir = _create_temporary_dbt_profile_dir(repo_root)
+    dbt_command = [
+        *_resolve_script_command("dbt"),
+        *command,
+        *args,
+        "--profiles-dir",
+        str(profile_dir),
+    ]
+    try:
+        return _run_subprocess(
+            dbt_command,
+            cwd=project_dir,
+            repo_root=repo_root,
+            environment=_build_local_dbt_environment(repo_root),
+        )
+    finally:
+        _cache_dbt_artifacts(project_dir, repo_root)
+        _cleanup_dbt_artifacts(project_dir)
+        shutil.rmtree(profile_dir, ignore_errors=True)
 
 
 def _build_safe_environment(repo_root: Path | None = None) -> dict[str, str]:
@@ -94,6 +225,21 @@ def _build_safe_environment(repo_root: Path | None = None) -> dict[str, str]:
     return environment
 
 
+def _build_local_dbt_environment(repo_root: Path) -> dict[str, str]:
+    """Build a local dbt environment that avoids container-only package paths."""
+    environment = _build_safe_environment(repo_root)
+    packages_install_path = environment.get("DBT_PACKAGES_INSTALL_PATH")
+    if (
+        not packages_install_path
+        or packages_install_path == DEFAULT_AIRFLOW_DBT_PACKAGES_INSTALL_PATH
+    ):
+        environment["DBT_PACKAGES_INSTALL_PATH"] = (
+            DEFAULT_LOCAL_DBT_PACKAGES_INSTALL_PATH
+        )
+
+    return environment
+
+
 def _resolve_script_command(script_name: str) -> list[str]:
     """Resolve a console script from the active interpreter when possible."""
     executable_directory = Path(sys.executable).resolve().parent
@@ -114,6 +260,7 @@ def _run_subprocess(
     *,
     cwd: Path | None = None,
     repo_root: Path | None = None,
+    environment: dict[str, str] | None = None,
 ) -> int:
     """Run one subprocess and return its exit code without raising."""
     resolved_repo_root = _resolve_repo_root(repo_root)
@@ -121,7 +268,7 @@ def _run_subprocess(
         list(command),
         check=False,
         cwd=cwd or resolved_repo_root,
-        env=_build_safe_environment(resolved_repo_root),
+        env=environment or _build_safe_environment(resolved_repo_root),
     )
     return completed_process.returncode
 
@@ -138,6 +285,29 @@ def _run_command_chain(
             cwd=working_directory,
             repo_root=repo_root,
         )
+        if exit_code != 0:
+            return exit_code
+
+    return 0
+
+
+def _arguments_include_option(arguments: Sequence[str], option_name: str) -> bool:
+    """Return whether one CLI argument list includes a flag or key-value option."""
+    return any(
+        argument == option_name or argument.startswith(f"{option_name}=")
+        for argument in arguments
+    )
+
+
+def _run_task_flow(
+    *,
+    repo_root: Path,
+    steps: Sequence[tuple[str, TaskHandler, Sequence[str]]],
+) -> int:
+    """Run a named sequence of repository task handlers in order."""
+    for step_name, step_handler, step_arguments in steps:
+        print(f"==> {step_name}")
+        exit_code = step_handler(step_arguments, repo_root)
         if exit_code != 0:
             return exit_code
 
@@ -251,61 +421,160 @@ def _run_ingest(arguments: Sequence[str], repo_root: Path) -> int:
 
 def _run_dbt_debug(arguments: Sequence[str], repo_root: Path) -> int:
     """Run `dbt debug` from the project root."""
-    return _run_subprocess(
-        [*_resolve_script_command("dbt"), "debug", *arguments],
-        cwd=_dbt_project_dir(repo_root),
-        repo_root=repo_root,
-    )
+    return _run_dbt_subprocess(("debug",), *arguments, repo_root=repo_root)
+
+
+def _run_dbt_deps(arguments: Sequence[str], repo_root: Path) -> int:
+    """Run `dbt deps` from the project root."""
+    return _run_dbt_subprocess(("deps",), *arguments, repo_root=repo_root)
 
 
 def _run_dbt_parse(arguments: Sequence[str], repo_root: Path) -> int:
     """Run `dbt parse` from the project root."""
-    return _run_subprocess(
-        [*_resolve_script_command("dbt"), "parse", *arguments],
-        cwd=_dbt_project_dir(repo_root),
-        repo_root=repo_root,
-    )
+    return _run_dbt_subprocess(("parse",), *arguments, repo_root=repo_root)
 
 
 def _run_dbt_freshness(arguments: Sequence[str], repo_root: Path) -> int:
     """Run `dbt source freshness` from the project root."""
-    return _run_subprocess(
-        [*_resolve_script_command("dbt"), "source", "freshness", *arguments],
-        cwd=_dbt_project_dir(repo_root),
+    return _run_dbt_subprocess(
+        ("source", "freshness"),
+        *arguments,
         repo_root=repo_root,
     )
 
 
 def _run_dbt_snapshot(arguments: Sequence[str], repo_root: Path) -> int:
     """Run `dbt snapshot` from the project root."""
-    return _run_subprocess(
-        [*_resolve_script_command("dbt"), "snapshot", *arguments],
-        cwd=_dbt_project_dir(repo_root),
-        repo_root=repo_root,
-    )
+    return _run_dbt_subprocess(("snapshot",), *arguments, repo_root=repo_root)
 
 
 def _run_dbt_build(arguments: Sequence[str], repo_root: Path) -> int:
     """Run `dbt build` from the project root."""
-    return _run_subprocess(
-        [*_resolve_script_command("dbt"), "build", *arguments],
-        cwd=_dbt_project_dir(repo_root),
+    return _run_dbt_subprocess(("build",), *arguments, repo_root=repo_root)
+
+
+def _run_dbt_docs_generate(arguments: Sequence[str], repo_root: Path) -> int:
+    """Run `dbt docs generate` from the project root."""
+    return _run_dbt_subprocess(
+        ("docs", "generate"),
+        *arguments,
         repo_root=repo_root,
     )
 
 
 def _run_dashboard_validate(arguments: Sequence[str], repo_root: Path) -> int:
     """Validate version-controlled dashboard assets against the dbt manifest."""
+    resolved_arguments = list(arguments)
+    cached_manifest_path = _dbt_artifact_cache_dir(repo_root) / "manifest.json"
+    if (
+        not _arguments_include_option(resolved_arguments, "--manifest")
+        and cached_manifest_path.is_file()
+    ):
+        resolved_arguments = [
+            "--manifest",
+            DBT_MANIFEST_CACHE_PATH.as_posix(),
+            *resolved_arguments,
+        ]
+
     return _run_subprocess(
-        [sys.executable, "-m", "dashboards.validation", *arguments],
+        [sys.executable, "-m", "dashboards.validation", *resolved_arguments],
         repo_root=repo_root,
+    )
+
+
+def _normalize_bootstrap_ingestion_arguments(
+    arguments: Sequence[str],
+) -> list[str] | None:
+    """Return bootstrap ingestion arguments with the standard date-range default."""
+    if _arguments_include_option(arguments, "--mode"):
+        print(
+            "bootstrap-backfill manages --mode automatically; remove --mode from the command.",
+            file=sys.stderr,
+        )
+        return None
+
+    normalized_arguments = list(arguments)
+    if not any(
+        _arguments_include_option(normalized_arguments, option_name)
+        for option_name in (
+            "--use-olist-date-range",
+            "--start-date",
+            "--end-date",
+        )
+    ):
+        normalized_arguments.insert(0, "--use-olist-date-range")
+
+    return ["--mode", "bootstrap", *normalized_arguments]
+
+
+def _normalize_incremental_ingestion_arguments(
+    arguments: Sequence[str],
+) -> list[str] | None:
+    """Return incremental ingestion arguments with the fixed runtime mode."""
+    if _arguments_include_option(arguments, "--mode"):
+        print(
+            "daily-runtime manages --mode automatically; remove --mode from the command.",
+            file=sys.stderr,
+        )
+        return None
+
+    return ["--mode", "incremental", *arguments]
+
+
+def _run_bootstrap_backfill(arguments: Sequence[str], repo_root: Path) -> int:
+    """Run the full historical operator flow from ingestion through validation."""
+    normalized_ingestion_arguments = _normalize_bootstrap_ingestion_arguments(arguments)
+    if normalized_ingestion_arguments is None:
+        return 2
+
+    return _run_task_flow(
+        repo_root=repo_root,
+        steps=(
+            (
+                "Run bootstrap ingestion",
+                _run_ingest,
+                tuple(normalized_ingestion_arguments),
+            ),
+            ("Install dbt package dependencies", _run_dbt_deps, ()),
+            ("Run dbt source freshness", _run_dbt_freshness, ()),
+            ("Run dbt snapshots", _run_dbt_snapshot, ()),
+            ("Run dbt build", _run_dbt_build, ("--full-refresh",)),
+            ("Generate dbt docs artifacts", _run_dbt_docs_generate, ()),
+            ("Validate dashboard package", _run_dashboard_validate, ()),
+        ),
+    )
+
+
+def _run_daily_runtime(arguments: Sequence[str], repo_root: Path) -> int:
+    """Run the incremental operator flow from ingestion through validation."""
+    normalized_ingestion_arguments = _normalize_incremental_ingestion_arguments(
+        arguments
+    )
+    if normalized_ingestion_arguments is None:
+        return 2
+
+    return _run_task_flow(
+        repo_root=repo_root,
+        steps=(
+            (
+                "Run incremental ingestion",
+                _run_ingest,
+                tuple(normalized_ingestion_arguments),
+            ),
+            ("Install dbt package dependencies", _run_dbt_deps, ()),
+            ("Run dbt source freshness", _run_dbt_freshness, ()),
+            ("Run dbt snapshots", _run_dbt_snapshot, ()),
+            ("Run dbt build", _run_dbt_build, ()),
+            ("Generate dbt docs artifacts", _run_dbt_docs_generate, ()),
+            ("Validate dashboard package", _run_dashboard_validate, ()),
+        ),
     )
 
 
 def _run_metabase_up(_: Sequence[str], repo_root: Path) -> int:
     """Start the local Metabase runtime with Docker Compose."""
     return _run_subprocess(
-        ["docker", "compose", "up", "-d"],
+        ["docker", "compose", "up", "-d", "metabase-postgres", "metabase"],
         repo_root=repo_root,
     )
 
@@ -313,7 +582,7 @@ def _run_metabase_up(_: Sequence[str], repo_root: Path) -> int:
 def _run_metabase_down(_: Sequence[str], repo_root: Path) -> int:
     """Stop the local Metabase runtime with Docker Compose."""
     return _run_subprocess(
-        ["docker", "compose", "down"],
+        ["docker", "compose", "stop", "metabase", "metabase-postgres"],
         repo_root=repo_root,
     )
 
@@ -325,6 +594,68 @@ def _run_metabase_logs(arguments: Sequence[str], repo_root: Path) -> int:
         command.extend(arguments)
     else:
         command.extend(["--tail", "120", "metabase"])
+    return _run_subprocess(command, repo_root=repo_root)
+
+
+def _run_airflow_init(_: Sequence[str], repo_root: Path) -> int:
+    """Initialize the local Airflow metadata database and admin account."""
+    return _run_subprocess(
+        ["docker", "compose", "up", "airflow-init"],
+        repo_root=repo_root,
+    )
+
+
+def _run_airflow_up(_: Sequence[str], repo_root: Path) -> int:
+    """Start the local Airflow runtime with Docker Compose."""
+    return _run_subprocess(
+        [
+            "docker",
+            "compose",
+            "up",
+            "-d",
+            "airflow-postgres",
+            "airflow-api-server",
+            "airflow-scheduler",
+            "airflow-dag-processor",
+            "airflow-triggerer",
+        ],
+        repo_root=repo_root,
+    )
+
+
+def _run_airflow_down(_: Sequence[str], repo_root: Path) -> int:
+    """Stop the local Airflow runtime without affecting Metabase services."""
+    return _run_subprocess(
+        [
+            "docker",
+            "compose",
+            "stop",
+            "airflow-api-server",
+            "airflow-scheduler",
+            "airflow-dag-processor",
+            "airflow-triggerer",
+            "airflow-postgres",
+        ],
+        repo_root=repo_root,
+    )
+
+
+def _run_airflow_logs(arguments: Sequence[str], repo_root: Path) -> int:
+    """Stream recent logs from the local Airflow runtime."""
+    command = ["docker", "compose", "logs"]
+    if arguments:
+        command.extend(arguments)
+    else:
+        command.extend(
+            [
+                "--tail",
+                "120",
+                "airflow-api-server",
+                "airflow-scheduler",
+                "airflow-dag-processor",
+                "airflow-triggerer",
+            ]
+        )
     return _run_subprocess(command, repo_root=repo_root)
 
 
@@ -369,6 +700,11 @@ COMMAND_SPECS = {
         accepts_extra_args=True,
         handler=_run_ingest,
     ),
+    "dbt-deps": TaskSpec(
+        description="Run dbt deps from marketplace_analytics_dbt",
+        accepts_extra_args=True,
+        handler=_run_dbt_deps,
+    ),
     "dbt-debug": TaskSpec(
         description="Run dbt debug from marketplace_analytics_dbt",
         accepts_extra_args=True,
@@ -394,10 +730,45 @@ COMMAND_SPECS = {
         accepts_extra_args=True,
         handler=_run_dbt_build,
     ),
+    "dbt-docs-generate": TaskSpec(
+        description="Run dbt docs generate from marketplace_analytics_dbt",
+        accepts_extra_args=True,
+        handler=_run_dbt_docs_generate,
+    ),
+    "bootstrap-backfill": TaskSpec(
+        description="Run bootstrap ingestion plus dbt validation and dashboard checks",
+        accepts_extra_args=True,
+        handler=_run_bootstrap_backfill,
+    ),
+    "daily-runtime": TaskSpec(
+        description="Run incremental ingestion plus dbt validation and dashboard checks",
+        accepts_extra_args=True,
+        handler=_run_daily_runtime,
+    ),
     "dashboard-validate": TaskSpec(
         description="Validate dashboard specs, SQL assets, and screenshots",
         accepts_extra_args=True,
         handler=_run_dashboard_validate,
+    ),
+    "airflow-init": TaskSpec(
+        description="Initialize the local Airflow metadata database and admin user",
+        accepts_extra_args=False,
+        handler=_run_airflow_init,
+    ),
+    "airflow-up": TaskSpec(
+        description="Start the local Airflow runtime services",
+        accepts_extra_args=False,
+        handler=_run_airflow_up,
+    ),
+    "airflow-down": TaskSpec(
+        description="Stop the local Airflow runtime services",
+        accepts_extra_args=False,
+        handler=_run_airflow_down,
+    ),
+    "airflow-logs": TaskSpec(
+        description="Show recent logs from the local Airflow runtime",
+        accepts_extra_args=True,
+        handler=_run_airflow_logs,
     ),
     "metabase-up": TaskSpec(
         description="Start the local Metabase and PostgreSQL runtime",
