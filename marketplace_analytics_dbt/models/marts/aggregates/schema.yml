@@ -6,14 +6,16 @@ models:
   - name: mart_exec_daily
     description: >
       Executive daily KPI feed. Grain: one row per calendar_date (purchase-date
-      cohort). All rates use the documented denominator conventions and must
-      never be recomputed in BI. GMV follows the canonical metric definition:
-      item value plus freight for non-cancelled orders. The mart intentionally
-      emits non-empty order dates only. Two singular tests intentionally split
-      responsibilities here: assert_mart_exec_daily_covers_order_dates isolates
-      date-grain parity, while assert_mart_exec_daily_reconciles checks
-      conserved measures against the conformed facts. They are complementary,
-      not duplicates.
+      cohort). All rates use the documented denominator conventions. Row-grain
+      KPI columns remain available for convenience, while cross-period BI
+      rollups must aggregate the mart-published support columns instead of
+      averaging daily derived values. GMV follows the canonical metric
+      definition: item value plus freight for non-cancelled orders. The mart
+      intentionally emits non-empty order dates only. Two singular tests
+      intentionally split responsibilities here:
+      assert_mart_exec_daily_covers_order_dates isolates date-grain parity,
+      while assert_mart_exec_daily_reconciles checks conserved measures against
+      the conformed facts. They are complementary, not duplicates.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -158,7 +160,10 @@ models:
                 min_value: 0
                 inclusive: true
       - name: aov
-        description: "gmv / non_cancelled_orders_count. Nullable when denominator is zero."
+        description: >
+          Convenience row-grain KPI: gmv / non_cancelled_orders_count.
+          Nullable when denominator is zero. Cross-period rollups should use
+          gmv plus non_cancelled_orders_count.
         data_type: numeric
         data_tests:
           - dbt_utils.accepted_range:
@@ -166,7 +171,10 @@ models:
                 min_value: 0
                 inclusive: true
       - name: cancellation_rate
-        description: "cancelled_orders_count / orders_count. Between 0 and 1."
+        description: >
+          Convenience row-grain KPI: cancelled_orders_count / orders_count.
+          Between 0 and 1. Cross-period rollups should use the published count
+          columns instead of averaging daily rates.
         data_type: float64
         data_tests:
           - not_null
@@ -177,8 +185,10 @@ models:
                 inclusive: true
       - name: late_delivery_rate
         description: >
-          late_orders_count / delivered_orders_count. Between 0 and 1.
-          Nullable on dates with no deliveries.
+          Convenience row-grain KPI: late_orders_count /
+          delivered_orders_count. Between 0 and 1. Nullable on dates with no
+          deliveries. Cross-period rollups should use the published count
+          columns instead of averaging daily rates.
         data_type: float64
         data_tests:
           - dbt_utils.accepted_range:
@@ -195,8 +205,22 @@ models:
               arguments:
                 min_value: 0
                 inclusive: true
+      - name: review_score_sum
+        description: >
+          Additive review-score numerator across review rows in the
+          purchase-date cohort. Cross-period sentiment rollups should use
+          review_score_sum plus reviews_count.
+        data_type: float64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
       - name: avg_review_score
-        description: "Average review score on the purchase-date cohort."
+        description: >
+          Convenience row-grain average review score on the purchase-date
+          cohort, derived from review_score_sum / reviews_count.
         data_type: float64
         data_tests:
           - dbt_utils.accepted_range:
@@ -486,8 +510,10 @@ models:
       population, delivery outcomes, holiday context, and proxy delivery
       weather. Weather fields are proxy order-weighted averages across each
       slice's delivery-date distribution, not a single day-level snapshot.
-      Customer-experience metrics are intentionally excluded so the operational
-      contract stays pure.
+      Additive sums and observation counts are published alongside convenience
+      averages so BI can aggregate slices safely without reverse-engineering
+      weighting. Customer-experience metrics are intentionally excluded so the
+      operational contract stays pure.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -560,8 +586,22 @@ models:
               arguments:
                 min_value: 0
                 inclusive: true
+      - name: late_days_sum
+        description: >
+          Additive late_days numerator across late orders only. Cross-slice
+          severity rollups should use late_days_sum plus late_orders_count.
+        data_type: float64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
       - name: avg_late_days
-        description: "Average late_days among late orders only. Nullable when no late orders exist."
+        description: >
+          Convenience row-grain average late_days among late orders only,
+          derived from late_days_sum / late_orders_count. Nullable when no late
+          orders exist.
         data_type: float64
         data_tests:
           - dbt_utils.accepted_range:
@@ -593,25 +633,101 @@ models:
           missing. Under the current ingestion design this is usually one
           configured constant rather than an order-level geospatial match.
         data_type: string
+      - name: delivery_temperature_max_observation_count
+        description: "Orders in the slice with a non-null delivery_temperature_max value."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: delivery_temperature_max_sum
+        description: >
+          Additive proxy delivery-date max-temperature numerator across orders
+          with a non-null observation in the slice.
+        data_type: float64
+        data_tests:
+          - not_null
       - name: avg_delivery_temperature_max
         description: >
-          Average proxy delivery-date max temperature across orders in the
-          slice's delivery-date distribution. Nullable.
+          Convenience row-grain average proxy delivery-date max temperature
+          derived from delivery_temperature_max_sum /
+          delivery_temperature_max_observation_count. Nullable.
         data_type: float64
+      - name: delivery_temperature_min_observation_count
+        description: "Orders in the slice with a non-null delivery_temperature_min value."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: delivery_temperature_min_sum
+        description: >
+          Additive proxy delivery-date min-temperature numerator across orders
+          with a non-null observation in the slice.
+        data_type: float64
+        data_tests:
+          - not_null
       - name: avg_delivery_temperature_min
         description: >
-          Average proxy delivery-date min temperature across orders in the
-          slice's delivery-date distribution. Nullable.
+          Convenience row-grain average proxy delivery-date min temperature
+          derived from delivery_temperature_min_sum /
+          delivery_temperature_min_observation_count. Nullable.
         data_type: float64
+      - name: delivery_precipitation_total_observation_count
+        description: "Orders in the slice with a non-null delivery_precipitation_total value."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: delivery_precipitation_total_sum
+        description: >
+          Additive proxy delivery-date precipitation numerator across orders
+          with a non-null observation in the slice.
+        data_type: float64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
       - name: avg_delivery_precipitation_total
         description: >
-          Average proxy delivery-date precipitation across orders in the
-          slice's delivery-date distribution. Nullable.
+          Convenience row-grain average proxy delivery-date precipitation
+          derived from delivery_precipitation_total_sum /
+          delivery_precipitation_total_observation_count. Nullable.
         data_type: float64
+      - name: delivery_humidity_afternoon_observation_count
+        description: "Orders in the slice with a non-null delivery_humidity_afternoon value."
+        data_type: int64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: delivery_humidity_afternoon_sum
+        description: >
+          Additive proxy delivery-date afternoon-humidity numerator across
+          orders with a non-null observation in the slice.
+        data_type: float64
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
       - name: avg_delivery_humidity_afternoon
         description: >
-          Average proxy delivery-date afternoon humidity across orders in the
-          slice's delivery-date distribution. Nullable.
+          Convenience row-grain average proxy delivery-date afternoon humidity
+          derived from delivery_humidity_afternoon_sum /
+          delivery_humidity_afternoon_observation_count. Nullable.
         data_type: float64
 
   # ---------------------------------------------------------------------------

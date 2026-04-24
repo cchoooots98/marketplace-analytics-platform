@@ -6,13 +6,18 @@
 --          volume, delivery outcomes, late-day severity, holiday context, and
 --          proxy delivery-weather context. Customer-experience metrics live in a
 --          dedicated mart so operational and experience contracts stay cleanly
---          separated.
+--          separated. Convenience averages remain available at the mart grain,
+--          while additive sums and observation counts are published for any BI
+--          rollup that needs to aggregate slices safely.
 -- Key measures:
 --   orders_count                        INT64    Orders in the cohort slice
 --   delivered_orders_count              INT64    Delivered orders in the slice
 --   late_orders_count                   INT64    Late delivered orders in the slice
 --   cancelled_orders_count              INT64    Cancelled orders in the slice
---   avg_late_days                       FLOAT64  Average late_days among late orders
+--   late_days_sum                       FLOAT64  Additive late_days numerator on
+--                                               late orders only
+--   avg_late_days                       FLOAT64  Convenience row-grain average
+--                                               late_days among late orders
 --   late_delivery_rate                  NUMERIC  late_orders_count / delivered_orders_count
 -- Update frequency: Daily batch rebuild. Full rebuild is intentional because
 --                   this mart is small, audit-friendly, and derived from
@@ -69,7 +74,7 @@ date_context as (
 
 ),
 
-final as (
+aggregated as (
 
     select
         purchase_date,
@@ -79,9 +84,10 @@ final as (
         countif(is_delivered) as delivered_orders_count,
         countif(is_late) as late_orders_count,
         countif(is_cancelled) as cancelled_orders_count,
-        avg(case
+        sum(case
             when is_late then cast(late_days as float64)
-        end) as avg_late_days,
+            else 0
+        end) as late_days_sum,
         safe_divide(
             countif(is_late),
             nullif(countif(is_delivered), 0)
@@ -91,18 +97,85 @@ final as (
         any_value(dc.is_holiday) as is_purchase_on_holiday,
         any_value(dc.holiday_name) as holiday_name_at_purchase,
         any_value(delivery_weather_location_key) as delivery_weather_location_key,
-        avg(cast(delivery_temperature_max as float64))
-            as avg_delivery_temperature_max,
-        avg(cast(delivery_temperature_min as float64))
-            as avg_delivery_temperature_min,
-        avg(cast(delivery_precipitation_total as float64))
-            as avg_delivery_precipitation_total,
-        avg(cast(delivery_humidity_afternoon as float64))
-            as avg_delivery_humidity_afternoon
+        countif(delivery_temperature_max is not null)
+            as delivery_temperature_max_observation_count,
+        sum(case
+            when delivery_temperature_max is not null
+                then cast(delivery_temperature_max as float64)
+            else 0
+        end) as delivery_temperature_max_sum,
+        countif(delivery_temperature_min is not null)
+            as delivery_temperature_min_observation_count,
+        sum(case
+            when delivery_temperature_min is not null
+                then cast(delivery_temperature_min as float64)
+            else 0
+        end) as delivery_temperature_min_sum,
+        countif(delivery_precipitation_total is not null)
+            as delivery_precipitation_total_observation_count,
+        sum(case
+            when delivery_precipitation_total is not null
+                then cast(delivery_precipitation_total as float64)
+            else 0
+        end) as delivery_precipitation_total_sum,
+        countif(delivery_humidity_afternoon is not null)
+            as delivery_humidity_afternoon_observation_count,
+        sum(case
+            when delivery_humidity_afternoon is not null
+                then cast(delivery_humidity_afternoon as float64)
+            else 0
+        end) as delivery_humidity_afternoon_sum
     from orders_with_context as owc
     inner join date_context as dc
         on owc.purchase_date = dc.calendar_date
     group by purchase_date, customer_state, delivery_delay_bucket
+
+),
+
+final as (
+
+    select
+        purchase_date,
+        customer_state,
+        delivery_delay_bucket,
+        orders_count,
+        delivered_orders_count,
+        late_orders_count,
+        cancelled_orders_count,
+        late_days_sum,
+        safe_divide(
+            late_days_sum,
+            nullif(late_orders_count, 0)
+        ) as avg_late_days,
+        late_delivery_rate,
+        is_purchase_on_holiday,
+        holiday_name_at_purchase,
+        delivery_weather_location_key,
+        delivery_temperature_max_observation_count,
+        delivery_temperature_max_sum,
+        safe_divide(
+            delivery_temperature_max_sum,
+            nullif(delivery_temperature_max_observation_count, 0)
+        ) as avg_delivery_temperature_max,
+        delivery_temperature_min_observation_count,
+        delivery_temperature_min_sum,
+        safe_divide(
+            delivery_temperature_min_sum,
+            nullif(delivery_temperature_min_observation_count, 0)
+        ) as avg_delivery_temperature_min,
+        delivery_precipitation_total_observation_count,
+        delivery_precipitation_total_sum,
+        safe_divide(
+            delivery_precipitation_total_sum,
+            nullif(delivery_precipitation_total_observation_count, 0)
+        ) as avg_delivery_precipitation_total,
+        delivery_humidity_afternoon_observation_count,
+        delivery_humidity_afternoon_sum,
+        safe_divide(
+            delivery_humidity_afternoon_sum,
+            nullif(delivery_humidity_afternoon_observation_count, 0)
+        ) as avg_delivery_humidity_afternoon
+    from aggregated
 
 )
 

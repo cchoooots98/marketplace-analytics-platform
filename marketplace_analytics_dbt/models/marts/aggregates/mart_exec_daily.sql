@@ -6,7 +6,9 @@
 --          cancellation rate, late delivery rate, new customers, review score)
 --          are cohorted by the order's purchase_date so every KPI on this row
 --          refers to the same set of orders. BI dashboards read this mart
---          directly and must not recompute KPI formulas.
+--          directly. Convenience KPI columns are valid at the mart grain; any
+--          cross-period rollup must use the published support columns instead
+--          of averaging daily rates or averages.
 -- Key measures (all numerator/denominator pairs defined once here):
 --   orders_count                INT64    Orders placed on the date
 --   non_cancelled_orders_count  INT64    Orders placed on the date that are
@@ -14,12 +16,20 @@
 --   gmv                         NUMERIC  Item + freight, excluding cancelled
 --   items_value                 NUMERIC  Sum of item prices (all orders)
 --   freight_total               NUMERIC  Sum of freight values (all orders)
---   aov                         NUMERIC  gmv / non_cancelled_orders_count
---   cancellation_rate           NUMERIC  cancelled / orders_count (0..1)
---   late_delivery_rate          NUMERIC  late / delivered (0..1); NULL when no
+--   aov                         NUMERIC  Convenience row-grain KPI:
+--                                        gmv / non_cancelled_orders_count
+--   cancellation_rate           NUMERIC  Convenience row-grain KPI:
+--                                        cancelled / orders_count (0..1)
+--   late_delivery_rate          NUMERIC  Convenience row-grain KPI:
+--                                        late / delivered (0..1); NULL when no
 --                                        deliveries
 --   new_customers_count         INT64    First-order customers on the date
---   avg_review_score            FLOAT64  Average score for orders placed on date
+--   reviews_count               INT64    Review-row support count on the date
+--   review_score_sum            FLOAT64  Additive review-score numerator on the
+--                                        purchase-date cohort
+--   avg_review_score            FLOAT64  Convenience row-grain average review
+--                                        score derived from review_score_sum /
+--                                        reviews_count
 -- Update frequency: Daily batch rebuild. Full rebuild is intentional because
 --                   this mart is small, audit-friendly, and derived from
 --                   governed facts. Rows are emitted only for dates with at
@@ -74,7 +84,7 @@ reviews_by_date as (
     select
         purchase_date,
         count(*) as reviews_count,
-        avg(cast(review_score as float64)) as avg_review_score
+        sum(cast(review_score as float64)) as review_score_sum
     from {{ ref('fact_reviews') }}
     group by purchase_date
 
@@ -105,8 +115,9 @@ final as (
         ob.items_value,
         ob.freight_total,
         ob.payment_total,
-        -- AOV uses non_cancelled_orders_count so the revenue numerator and
-        -- order denominator describe the same commercial population.
+        -- Convenience KPI columns remain useful at the mart grain. BI rollups
+        -- should aggregate the published support columns above rather than
+        -- averaging these derived values across dates.
         safe_divide(ob.gmv, nullif(ob.non_cancelled_orders_count, 0)) as aov,
         safe_divide(ob.cancelled_orders_count, ob.orders_count) as cancellation_rate,
         -- Denominator is delivered_orders_count, not orders_count. Late is only
@@ -117,7 +128,11 @@ final as (
             nullif(ob.delivered_orders_count, 0)
         ) as late_delivery_rate,
         coalesce(rb.reviews_count, 0) as reviews_count,
-        rb.avg_review_score
+        coalesce(rb.review_score_sum, 0) as review_score_sum,
+        safe_divide(
+            rb.review_score_sum,
+            nullif(rb.reviews_count, 0)
+        ) as avg_review_score
     from {{ ref('dim_date') }} as d
     inner join orders_by_date as ob
         on d.calendar_date = ob.purchase_date

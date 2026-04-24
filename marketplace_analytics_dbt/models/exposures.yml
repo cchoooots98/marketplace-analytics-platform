@@ -33,8 +33,8 @@ exposures:
     maturity: medium
     url: docs/dashboard_specs.md#dashboard-3-fulfillment-operations
     description: >
-      Fulfillment operations dashboard for delay, holiday, and proxy weather
-      analysis backed only by mart_fulfillment_ops.
+      Fulfillment operations dashboard for delay, holiday, and bucketed weather
+      risk analysis backed only by mart_fulfillment_ops.
     depends_on:
       - ref('mart_fulfillment_ops')
     owner:
