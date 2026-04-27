@@ -22,6 +22,15 @@ DBT_CACHED_ARTIFACT_NAMES = (
     "catalog.json",
     "index.html",
 )
+WAREHOUSE_FRESHNESS_MODE_ENV = "WAREHOUSE_FRESHNESS_MODE"
+WAREHOUSE_FRESHNESS_STATIC_MODE = "static"
+WAREHOUSE_FRESHNESS_RUNTIME_MODE = "runtime"
+VALID_WAREHOUSE_FRESHNESS_MODES = frozenset(
+    {
+        WAREHOUSE_FRESHNESS_STATIC_MODE,
+        WAREHOUSE_FRESHNESS_RUNTIME_MODE,
+    }
+)
 DEFAULT_LOCAL_DBT_PACKAGES_INSTALL_PATH = "dbt_packages"
 DEFAULT_AIRFLOW_DBT_PACKAGES_INSTALL_PATH = "/opt/airflow/dbt_packages"
 SETUP_DIRECTORIES = (
@@ -436,6 +445,30 @@ def _run_dbt_parse(arguments: Sequence[str], repo_root: Path) -> int:
 
 def _run_dbt_freshness(arguments: Sequence[str], repo_root: Path) -> int:
     """Run `dbt source freshness` from the project root."""
+    freshness_mode = (
+        os.getenv(
+            WAREHOUSE_FRESHNESS_MODE_ENV,
+            WAREHOUSE_FRESHNESS_STATIC_MODE,
+        )
+        .strip()
+        .lower()
+    )
+    if freshness_mode not in VALID_WAREHOUSE_FRESHNESS_MODES:
+        print(
+            f"{WAREHOUSE_FRESHNESS_MODE_ENV} must be one of "
+            f"{sorted(VALID_WAREHOUSE_FRESHNESS_MODES)}; got {freshness_mode!r}.",
+            file=sys.stderr,
+        )
+        return 2
+
+    if freshness_mode == WAREHOUSE_FRESHNESS_STATIC_MODE:
+        print(
+            "Skipping dbt source freshness because "
+            f"{WAREHOUSE_FRESHNESS_MODE_ENV}=static. Static backfill mode is "
+            "validated by dbt structural, coverage, and reconciliation tests."
+        )
+        return 0
+
     return _run_dbt_subprocess(
         ("source", "freshness"),
         *arguments,

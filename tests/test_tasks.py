@@ -106,17 +106,110 @@ def test_dbt_commands_use_isolated_profile_wrapper(
 
     assert tasks.main(["dbt-debug"]) == 0
     assert tasks.main(["dbt-parse"]) == 0
-    assert tasks.main(["dbt-freshness"]) == 0
     assert tasks.main(["dbt-snapshot"]) == 0
     assert tasks.main(["dbt-build"]) == 0
 
     assert captured_calls == [
         (("debug",), (), tmp_path),
         (("parse",), (), tmp_path),
-        (("source", "freshness"), (), tmp_path),
         (("snapshot",), (), tmp_path),
         (("build",), (), tmp_path),
     ]
+
+
+def test_dbt_freshness_skips_dbt_in_static_mode(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Validate static mode keeps source freshness disabled by default.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing environment and subprocesses.
+        tmp_path: Pytest fixture providing a temporary repository root.
+
+    Returns:
+        None.
+    """
+    monkeypatch.setattr(tasks, "REPO_ROOT", tmp_path)
+    monkeypatch.delenv(tasks.WAREHOUSE_FRESHNESS_MODE_ENV, raising=False)
+    captured_calls: list[tuple[tuple[str, ...], tuple[str, ...], Path]] = []
+
+    def fake_run_dbt_subprocess(
+        command: tuple[str, ...],
+        *args: str,
+        repo_root: Path,
+    ) -> int:
+        captured_calls.append((command, args, repo_root))
+        return 0
+
+    monkeypatch.setattr(tasks, "_run_dbt_subprocess", fake_run_dbt_subprocess)
+
+    assert tasks.main(["dbt-freshness"]) == 0
+    assert captured_calls == []
+
+
+def test_dbt_freshness_uses_isolated_profile_wrapper_in_runtime_mode(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Validate runtime mode dispatches source freshness through dbt.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing environment and subprocesses.
+        tmp_path: Pytest fixture providing a temporary repository root.
+
+    Returns:
+        None.
+    """
+    monkeypatch.setattr(tasks, "REPO_ROOT", tmp_path)
+    monkeypatch.setenv(
+        tasks.WAREHOUSE_FRESHNESS_MODE_ENV,
+        tasks.WAREHOUSE_FRESHNESS_RUNTIME_MODE,
+    )
+    captured_calls: list[tuple[tuple[str, ...], tuple[str, ...], Path]] = []
+
+    def fake_run_dbt_subprocess(
+        command: tuple[str, ...],
+        *args: str,
+        repo_root: Path,
+    ) -> int:
+        captured_calls.append((command, args, repo_root))
+        return 0
+
+    monkeypatch.setattr(tasks, "_run_dbt_subprocess", fake_run_dbt_subprocess)
+
+    assert tasks.main(["dbt-freshness"]) == 0
+    assert captured_calls == [
+        (("source", "freshness"), (), tmp_path),
+    ]
+
+
+def test_dbt_freshness_rejects_unknown_mode(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Validate freshness mode typos fail before dbt execution.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing environment and subprocesses.
+        tmp_path: Pytest fixture providing a temporary repository root.
+
+    Returns:
+        None.
+    """
+    monkeypatch.setattr(tasks, "REPO_ROOT", tmp_path)
+    monkeypatch.setenv(tasks.WAREHOUSE_FRESHNESS_MODE_ENV, "invalid")
+
+    def fake_run_dbt_subprocess(
+        command: tuple[str, ...],
+        *args: str,
+        repo_root: Path,
+    ) -> int:
+        raise AssertionError("dbt should not run for an invalid freshness mode")
+
+    monkeypatch.setattr(tasks, "_run_dbt_subprocess", fake_run_dbt_subprocess)
+
+    assert tasks.main(["dbt-freshness"]) == 2
 
 
 def test_dbt_build_passes_arguments_through_to_dbt_cli(

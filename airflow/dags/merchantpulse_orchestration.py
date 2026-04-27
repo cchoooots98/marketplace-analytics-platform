@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TypeVar
@@ -23,7 +24,7 @@ DEFAULT_ARGS = {
     "retry_delay": timedelta(minutes=10),
 }
 BOOTSTRAP_START_DATE = datetime(2026, 1, 1, tzinfo=UTC)
-DAILY_SCHEDULE = "0 6 * * *"
+DAILY_SCHEDULE = os.getenv("AIRFLOW_DAILY_RUNTIME_SCHEDULE") or None
 TaskResult = TypeVar("TaskResult")
 
 

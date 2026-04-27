@@ -2,8 +2,15 @@ name: warehouse_runtime_checks
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 6 * * *"
+    inputs:
+      freshness_mode:
+        description: "Warehouse freshness mode: static skips source freshness; runtime enforces source freshness SLAs."
+        required: false
+        default: static
+        type: choice
+        options:
+          - static
+          - runtime
 
 jobs:
   runtime-checks:
@@ -23,6 +30,7 @@ jobs:
       BQ_INTERMEDIATE_DATASET: ${{ secrets.BQ_INTERMEDIATE_DATASET }}
       BQ_MARTS_DATASET: ${{ secrets.BQ_MARTS_DATASET }}
       BQ_SNAPSHOTS_DATASET: ${{ secrets.BQ_SNAPSHOTS_DATASET }}
+      WAREHOUSE_FRESHNESS_MODE: ${{ inputs.freshness_mode || vars.WAREHOUSE_FRESHNESS_MODE || 'static' }}
 
     steps:
       - name: Check out repository
@@ -82,9 +90,13 @@ jobs:
         run: dbt deps
 
       - name: Run source freshness
-        if: steps.config.outputs.enabled == 'true'
+        if: steps.config.outputs.enabled == 'true' && env.WAREHOUSE_FRESHNESS_MODE == 'runtime'
         working-directory: marketplace_analytics_dbt
         run: dbt source freshness --profiles-dir "$RUNNER_TEMP/dbt-profile" --target runtime --target-path target_runtime
+
+      - name: Skip source freshness in static mode
+        if: steps.config.outputs.enabled == 'true' && env.WAREHOUSE_FRESHNESS_MODE == 'static'
+        run: echo "Skipping source freshness because WAREHOUSE_FRESHNESS_MODE=static."
 
       - name: Run snapshots
         if: steps.config.outputs.enabled == 'true'
