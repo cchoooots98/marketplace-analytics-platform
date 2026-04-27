@@ -150,8 +150,12 @@ mart-published support columns instead of averaging daily derived values.
 ## Reliability And History Contracts
 
 - Source freshness uses `ingested_at_utc` as the loaded-at field and applies
-  runtime SLAs to supported transactional and enrichment tables.
-- The freshness policy is `warn_after = SLA` and `error_after = 2x SLA`.
+  runtime SLAs to supported transactional and enrichment tables only when
+  `WAREHOUSE_FRESHNESS_MODE=runtime`.
+- Static backfill mode skips source freshness and relies on completeness,
+  enrichment coverage, grain, relationship, and reconciliation tests.
+- The runtime freshness policy is `warn_after = SLA` and
+  `error_after = 2x SLA`.
 - `snap_sellers` and `snap_products` use dbt snapshots with `check` strategy to
   track master-data history without turning current-state dimensions into SCD2
   tables.
@@ -235,7 +239,8 @@ python tasks.py dbt-build
 ```
 
 Direct dbt equivalents from this folder remain available when you need more
-granular control:
+granular control. Direct `dbt source freshness` bypasses the task runner's
+`WAREHOUSE_FRESHNESS_MODE` guard, so run it only for runtime feed validation:
 
 ```bash
 dbt debug
@@ -262,7 +267,7 @@ directory.
 - Dashboard specs: `../docs/dashboard_specs.md`
 - Operations runbook: `../docs/operations_runbook.md`
 - Minimal dbt CI: `../.github/workflows/dbt_contracts.yml`
-- Scheduled runtime checks: `../.github/workflows/dbt_runtime_checks.yml`
+- Manual runtime checks: `../.github/workflows/dbt_runtime_checks.yml`
 
 The current CI workflow validates dbt project structure with `dbt parse`. It
 does not execute warehouse-backed SQL, so `dbt test` still needs a configured

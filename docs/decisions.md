@@ -153,9 +153,9 @@ For system shape, see `docs/architecture.md`. For the resulting contracts, see
 |---|---|
 | Status | Accepted |
 | Context | The project needs source observability, but freshness checks run against the warehouse and should not be confused with parse-only CI |
-| Decision | Use `ingested_at_utc` as the source freshness timestamp, warn at the stated SLA, and fail at 2x the SLA for supported transactional and enrichment sources |
-| Why | This matches the standard freshness-SLA operating pattern: operators see early degradation before the source becomes truly stale |
-| Trade-off | Freshness remains a runtime control in a configured environment; pull-request CI still cannot prove data recency. Static master-data backfills (`customers`, `sellers`, `products`, `geolocation`) intentionally do not publish freshness SLAs in V1. |
+| Decision | Use `ingested_at_utc` as the source freshness timestamp, warn at the stated SLA, and fail at 2x the SLA for supported transactional and enrichment sources when `WAREHOUSE_FRESHNESS_MODE=runtime` |
+| Why | This matches the standard freshness-SLA operating pattern for continuously arriving source data while avoiding false alarms for the current bounded historical backfill |
+| Trade-off | Freshness remains a runtime control in a configured environment; pull-request CI still cannot prove data recency. Static backfill mode must rely on completeness, coverage, grain, relationship, and reconciliation tests instead of recency alarms. Static master-data backfills (`customers`, `sellers`, `products`, `geolocation`) intentionally do not publish freshness SLAs in V1. |
 
 ## ADR 016: Track seller and product history with check-based snapshots
 
@@ -187,12 +187,12 @@ For system shape, see `docs/architecture.md`. For the resulting contracts, see
 | Why | This keeps the line-item fact lean and prevents implying a frozen-at-order-time contract that the source data does not support, while history remains accessible through snapshots |
 | Trade-off | Historical seller/product attribute analysis requires an explicit join to snapshots; marts should not imply those attributes are frozen at order time |
 
-## ADR 019: Run warehouse-backed freshness and dbt tests on a schedule
+## ADR 019: Run warehouse-backed validation manually by default
 
 | Field | Decision |
 |---|---|
 | Status | Accepted |
 | Context | Parse-only CI proves project structure, but it does not turn freshness SLAs or dbt tests into an actual operating alarm |
-| Decision | Add a scheduled GitHub Actions workflow for `dbt source freshness`, `dbt snapshot`, and dbt tests when runtime secrets are configured |
-| Why | This makes the documented SLA and DQ contracts observable in a recurring runtime environment instead of leaving them as manual-only checks |
-| Trade-off | The scheduled workflow depends on repository secrets and warehouse access, so it is more operationally coupled than parse-only CI |
+| Decision | Add a manual GitHub Actions workflow for warehouse-backed validation. Static mode skips `dbt source freshness`; runtime mode runs `dbt source freshness`, snapshots, and dbt tests when runtime secrets are configured |
+| Why | This keeps the current static historical dataset from producing false freshness failures while preserving the operational path for live source feeds |
+| Trade-off | The workflow depends on repository secrets and warehouse access, so it is more operationally coupled than parse-only CI. A schedule should be added only when source data has a real recurring arrival SLA. |

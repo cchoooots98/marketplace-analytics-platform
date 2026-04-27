@@ -20,10 +20,10 @@ sources:
           belongs in staging, intermediate, and marts models. Freshness
           thresholds below define the runtime operating SLA for supported
           transactional sources. Pull-request CI remains parse-only, while the
-          scheduled runtime workflow can execute warehouse-backed freshness
-          checks. Static master-data backfills (`customers`, `sellers`,
-          `products`, `geolocation`) intentionally omit freshness configs in
-          V1.
+          manual runtime workflow can execute warehouse-backed freshness checks
+          when `WAREHOUSE_FRESHNESS_MODE=runtime`. Static master-data backfills
+          (`customers`, `sellers`, `products`, `geolocation`) intentionally
+          omit freshness configs in V1.
 
     tables:
       - name: customers
@@ -559,8 +559,9 @@ sources:
         notes: >
           External enrichment is loaded as a bounded backfill for this platform.
           Freshness thresholds below document the intended runtime SLA.
-          Pull-request CI stays parse-only, while the scheduled runtime
-          workflow can execute warehouse-backed freshness checks.
+          Pull-request CI stays parse-only, while the manual runtime workflow
+          can execute warehouse-backed freshness checks when
+          `WAREHOUSE_FRESHNESS_MODE=runtime`.
 
     tables:
       - name: holidays

@@ -34,7 +34,8 @@ than rebuilding metric logic in the BI layer.
 - Python ingestion for Olist transactional data plus holiday and weather
   enrichment
 - BigQuery raw, staging, intermediate, conformed, and mart contracts
-- dbt tests, source freshness SLAs, snapshots, and dashboard lineage exposures
+- dbt tests, mode-aware source freshness SLAs, snapshots, and dashboard lineage
+  exposures
 - Core Trio dashboard package:
   `Executive Overview`, `Seller Operations`, and `Fulfillment Operations`
 - Local Metabase runtime with version-controlled SQL assets and reference
@@ -115,13 +116,16 @@ the warehouse contract rather than as follow-on notes.
 |---|---|
 | Python quality gates | `python tasks.py lint`, `python tasks.py format-check`, `python tasks.py test` |
 | dbt structural validation | `dbt deps`, `dbt parse --no-partial-parse`, dashboard asset validation |
-| Warehouse-backed runtime checks | Scheduled `dbt source freshness`, `dbt snapshot`, and `dbt test` workflow |
+| Warehouse-backed validation | Manual `dbt snapshot` and `dbt test` workflow, with source freshness enabled only in runtime freshness mode |
 | Dashboard governance | Version-controlled SQL, screenshot evidence, exposures, and spec validation |
 | Rerun discipline | Idempotent ingestion plus runbook-defined bootstrap and daily runtime flows |
 
 The pull-request workflow is intentionally secret-free. Warehouse-backed checks
-run separately so pull requests stay fast while runtime SLAs and data quality
-remain observable in configured environments.
+run separately so pull requests stay fast while runtime data quality remains
+observable in configured environments. `WAREHOUSE_FRESHNESS_MODE=static` is the
+default for the current bounded historical backfill; set
+`WAREHOUSE_FRESHNESS_MODE=runtime` only when source data is expected to arrive
+continuously and freshness SLAs should become operational alarms.
 
 ## Quick Start
 

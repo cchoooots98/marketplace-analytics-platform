@@ -1,9 +1,9 @@
 # Data Contracts
 
 This document defines the active warehouse contracts for MerchantPulse:
-declared grain, join keys, freshness SLAs, snapshot semantics, conformed facts,
-and published marts. It is the primary reference for what each warehouse layer
-means and what downstream consumers are allowed to rely on.
+declared grain, join keys, runtime freshness SLA configs, snapshot semantics,
+conformed facts, and published marts. It is the primary reference for what each
+warehouse layer means and what downstream consumers are allowed to rely on.
 
 Contracts are considered real only when they are implemented consistently in
 dbt SQL, schema tests, singular tests, snapshots, and downstream
@@ -22,7 +22,7 @@ context, see `docs/architecture.md`.
 | History is explicit | Historical master-data tracking lives in snapshots, not hidden inside current-state dimensions |
 | Conformed facts | `fact_*` tables preserve event grain plus governed foreign keys and order-time snapshots |
 | Governed marts | KPI formulas live in marts, not in dashboards |
-| Observable sources | Supported raw sources publish freshness SLAs using `ingested_at_utc` |
+| Observable sources | Supported raw sources publish runtime freshness SLA configs using `ingested_at_utc`; enforcement is enabled only when `WAREHOUSE_FRESHNESS_MODE=runtime` |
 | Optional enrichment | Holiday and weather fields may be null, but that missingness must remain measurable |
 | Idempotent reruns | Rebuilding from the same upstream state must produce the same warehouse state |
 | Explicit attribution | Seller experience metrics must declare the attributable seller-order population |
@@ -31,8 +31,10 @@ context, see `docs/architecture.md`.
 
 Freshness is measured from `ingested_at_utc`, the warehouse-arrival timestamp
 set by ingestion. Pull-request GitHub Actions CI remains parse-only, while
-warehouse-backed freshness, snapshots, and dbt tests can run through the
-scheduled runtime workflow documented in the operations runbook.
+warehouse-backed snapshots and dbt tests can run through the manual runtime
+workflow documented in the operations runbook. Source freshness is enabled only
+when `WAREHOUSE_FRESHNESS_MODE=runtime`; the current bounded historical
+backfill uses static completeness and enrichment coverage tests instead.
 
 | Source | Grain | Warn after | Error after | Why it matters |
 |---|---|---|---|---|
@@ -48,6 +50,12 @@ intentionally do not publish freshness SLAs in V1. They are treated as static
 reference loads; seller and product drift is governed through snapshots, while
 customer and geolocation integrity is validated structurally rather than by
 refresh cadence.
+
+Static backfill mode additionally validates that every required raw source is
+non-empty and that delivered order dates have weather coverage for the
+configured proxy location. This avoids treating unchanged historical data as a
+freshness failure while still proving that the bounded backfill is complete
+enough for the published marts.
 
 ## Canonical Identity And Time Semantics
 

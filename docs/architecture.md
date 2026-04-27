@@ -203,7 +203,7 @@ flowchart TB
 | Attribution integrity | Seller experience includes only single-seller orders |
 | Reconciliation | Executive, seller, fulfillment, and customer-experience marts reconcile to their upstream facts or reusable intermediates |
 | Published-shape contract | BI-facing marts enforce schema with dbt model contracts and the Core Trio dashboards are declared as dbt exposures |
-| Runtime operations | Scheduled warehouse-backed freshness and dbt tests can run separately from parse-only CI |
+| Runtime operations | Manual warehouse-backed validation can run separately from parse-only CI; freshness is enabled only for runtime feed mode |
 
 ## 8. Architecture Principles
 

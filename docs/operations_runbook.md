@@ -5,8 +5,9 @@ as a batch-oriented data platform. It is the primary operator reference for
 environment setup, execution order, rerun strategy, failure handling, and
 published BI refresh flow.
 
-The goal is operational clarity: source freshness, snapshots, dbt builds, and
-dashboard-facing marts should all have an explicit run order and failure path.
+The goal is operational clarity: source freshness in runtime feed mode,
+snapshots, dbt builds, and dashboard-facing marts should all have an explicit
+run order and failure path.
 
 For platform context, see `docs/architecture.md`. For data-layer guarantees,
 see `docs/data_contracts.md`.
@@ -45,6 +46,7 @@ Required values:
 | `OLIST_DATA_DIR` | Historical Olist CSV directory used by bootstrap ingestion |
 | `OLIST_LANDING_DIR` | Landing directory containing incremental batch subdirectories |
 | `INGESTION_STATE_TABLE` | Current-state control table used for incremental recovery and publish tracking |
+| `WAREHOUSE_FRESHNESS_MODE` | Warehouse validation mode; `static` skips source freshness, `runtime` enforces source freshness SLAs |
 | `DBT_PACKAGES_INSTALL_PATH` | Local dbt package install path for repository task execution |
 | `BQ_RAW_OLIST_DATASET` | Raw Olist dataset name |
 | `BQ_RAW_EXT_DATASET` | Raw enrichment dataset name |
@@ -61,6 +63,7 @@ Required values:
 | `METABASE_SITE_NAME` | Site name shown in the Metabase UI |
 | `METABASE_ADMIN_EMAIL` | Admin contact shown by Metabase |
 | `METABASE_DB_NAME` / `METABASE_DB_USER` / `METABASE_DB_PASS` | PostgreSQL app-database settings for Metabase |
+| `AIRFLOW_DAILY_RUNTIME_SCHEDULE` | Optional cron schedule for the local daily Airflow DAG; leave empty for manual-only static mode |
 
 ## 3. Core Validation Commands
 
@@ -136,9 +139,13 @@ by downstream validation under `.cache/dbt_artifacts/` before the mandatory
 `target*` cleanup runs. `python tasks.py dashboard-validate` automatically uses
 that cached manifest when available.
 
-Scheduled runtime checks are also available through
-`.github/workflows/dbt_runtime_checks.yml` once repository secrets for BigQuery
-credentials and project configuration are set.
+Warehouse runtime checks are available through
+`.github/workflows/dbt_runtime_checks.yml` as a manual workflow once repository
+secrets for BigQuery credentials and project configuration are set. The
+workflow defaults to `WAREHOUSE_FRESHNESS_MODE=static`, which skips source
+freshness and relies on static backfill completeness, enrichment coverage,
+grain, relationship, and reconciliation tests. Select `runtime` only when
+source data is expected to arrive continuously.
 
 ## 4. Local Metabase Runtime
 
@@ -166,8 +173,8 @@ Initial Metabase setup checklist:
 6. Set money fields to currency, rate fields to percentage, and keep seller/date
    relationships aligned to `dim_seller` and `dim_date`.
 7. Create saved questions from the SQL assets in `dashboards/sql/core_trio/`.
-8. Treat the checked-in SVG files as reference captures until they are replaced
-   with exported screenshots from the live Metabase UI.
+8. Treat the checked-in screenshot files as reference captures from the live
+   Metabase UI.
 
 Before publishing the dashboards, validate the repository contract:
 
@@ -183,7 +190,7 @@ The operating sequence is:
 1. Load or refresh raw Olist data
 2. Load or refresh holiday enrichment
 3. Load or refresh weather enrichment
-4. Run dbt source freshness
+4. Run dbt source freshness when `WAREHOUSE_FRESHNESS_MODE=runtime`
 5. Run dbt snapshot
 6. Run dbt build
 7. Generate dbt docs artifacts for lineage and contract validation
@@ -204,7 +211,7 @@ python tasks.py daily-runtime --skip-weather
 Operator guidance:
 
 - `bootstrap-backfill` is the standard cold-start historical path. It runs
-  bootstrap ingestion, `dbt deps`, `dbt source freshness`, `dbt snapshot`,
+  bootstrap ingestion, `dbt deps`, freshness when runtime mode is enabled, `dbt snapshot`,
   `dbt build --full-refresh`, `dbt docs generate`, and dashboard validation in
   one sequence.
 - `bootstrap-backfill` defaults to `--use-olist-date-range` unless an explicit
@@ -254,10 +261,18 @@ python tasks.py metabase-logs
 `dbt_contracts.yml` also runs `python tasks.py dashboard-validate` in CI, so the
 manual command is primarily for local pre-publish or pre-commit checks.
 
-## 6. Freshness Policy
+## 6. Freshness And Static Backfill Policy
+
+Warehouse validation has two operating modes:
+
+| Mode | Setting | Use case | Source freshness behavior |
+|---|---|---|---|
+| Static backfill | `WAREHOUSE_FRESHNESS_MODE=static` | Current bounded Olist historical dataset with holiday and weather enrichment over the same fixed date range | Skip source freshness and rely on completeness, coverage, grain, relationship, and reconciliation tests |
+| Runtime feed | `WAREHOUSE_FRESHNESS_MODE=runtime` | Continuously arriving source batches with an actual refresh SLA | Run `dbt source freshness` and fail at the configured error threshold |
 
 Freshness uses `ingested_at_utc` as the loaded-at timestamp because it reflects
-when data actually landed in the warehouse.
+when data actually landed in the warehouse. These SLAs are operational alarms
+only in runtime feed mode.
 
 | Source | Warn after | Error after |
 |---|---|---|
@@ -269,11 +284,23 @@ when data actually landed in the warehouse.
 | `raw_ext.weather_daily` | 48 hours | 96 hours |
 
 These checks are runtime operational controls. GitHub Actions CI stays
-parse-only for pull requests, while the scheduled runtime workflow can execute
-warehouse-backed freshness, snapshots, and dbt tests once secrets are
-configured.
+parse-only for pull requests, while the manual runtime workflow can execute
+snapshots and dbt tests once secrets are configured. It executes source
+freshness as well when runtime freshness mode is selected.
 Static master-data backfills such as `customers`, `sellers`, `products`, and
 `geolocation` intentionally do not publish freshness SLAs in V1.
+
+In static backfill mode, the warehouse contract shifts from freshness to
+backfill completeness:
+
+- `assert_static_backfill_sources_nonempty` fails when any required raw source
+  table is empty after bootstrap ingestion.
+- `assert_static_weather_delivery_date_coverage` fails when delivered Olist
+  order dates do not have weather rows for the configured proxy location.
+- Existing generic schema tests continue to enforce grain, relationships,
+  accepted values, and numeric domains.
+- Existing singular reconciliation tests continue to compare published marts
+  back to their governed upstream facts and intermediates.
 
 ## 7. Snapshot Policy
 
@@ -315,7 +342,7 @@ duplicate business records or false historical versions.
 
 | Symptom | First place to check | Likely cause | Immediate action |
 |---|---|---|---|
-| Source freshness warning or failure | `max(ingested_at_utc)` in the affected raw table | Loader did not run, loaded stale data, or upstream source lagged | Confirm loader execution, inspect ingestion logs, then decide whether to rerun or accept the lag |
+| Runtime source freshness warning or failure | `max(ingested_at_utc)` in the affected raw table | Loader did not run, loaded stale data, or upstream source lagged | Confirm loader execution, inspect ingestion logs, then decide whether to rerun or accept the lag |
 | Snapshot creates unexpected new versions | Snapshot source row values and `check_cols` | Batch metadata or noisy fields were included as change signals | Verify `check_cols` and compare only business attributes |
 | Delivered timestamp invariant fails | `int_order_delivery` logic plus `stg_orders` timestamp cast | Semantic drift between `is_delivered` and the underlying status/timestamp fields | Recheck the `is_delivered` rule and confirm status-only delivered source anomalies are not promoted to `TRUE` |
 | Payment reconciliation test fails | `int_order_value` aggregation logic plus staging rollups | Join fan-out, wrong aggregation grain, or intermediate rollup drift | Recompute expected order-level item and payment aggregates from staging before any downstream fix |
@@ -325,17 +352,17 @@ duplicate business records or false historical versions.
 
 ## 10. Failure Policy
 
-Use Section 8 to diagnose the symptom first. This table only defines whether
+Use Section 9 to diagnose the symptom first. This table only defines whether
 publishing may continue once the condition is confirmed.
 
 | Failure type | Diagnose in | Expected behavior |
 |---|---|---|
 | Missing core key | Model-specific investigation | Fail the job |
 | Missing optional weather or holiday value | Model-specific investigation | Allow null and log or test the missing rate |
-| Source freshness warning | Section 8: Source freshness warning or failure | Surface to operators and investigate before the next SLA breach |
-| Source freshness error | Section 8: Source freshness warning or failure | Treat as an operational failure for supported sources |
-| Snapshot change on tracked attributes | Section 8: Snapshot creates unexpected new versions | Create a new history version |
-| Snapshot churn from batch metadata | Section 8: Snapshot creates unexpected new versions | Treat as a configuration bug and fix snapshot logic |
+| Runtime source freshness warning | Section 9: Runtime source freshness warning or failure | Surface to operators and investigate before the next SLA breach |
+| Runtime source freshness error | Section 9: Runtime source freshness warning or failure | Treat as an operational failure for supported sources |
+| Snapshot change on tracked attributes | Section 9: Snapshot creates unexpected new versions | Create a new history version |
+| Snapshot churn from batch metadata | Section 9: Snapshot creates unexpected new versions | Treat as a configuration bug and fix snapshot logic |
 | dbt test failure | Section 9: Delivered timestamp invariant fails or Payment reconciliation test fails | Stop publishing downstream marts until resolved |
 | Dashboard validation failure | Section 9: Dashboard validation fails | Stop publishing the Core Trio assets until the contract is repaired |
 
@@ -345,24 +372,27 @@ Operational validation should include:
 
 | Category | Example |
 |---|---|
-| Happy path | Raw refresh, freshness, snapshots, dbt build, and docs generation complete in order |
+| Happy path | Raw refresh, static backfill completeness, snapshots, dbt build, and docs generation complete in order |
 | Boundary | Orders without item rows or payment rows remain preserved in `int_order_value`; reconciliation compares the published order-grain aggregates back to staging rollups |
 | Invalid input | Rows marked `is_delivered = TRUE` without an actual customer delivery timestamp fail the singular invariant test |
-| Regression | Rerunning an unchanged seller or product source does not create a new snapshot version; dashboard validation catches spec drift before publish time |
+| Regression | Rerunning an unchanged seller or product source does not create a new snapshot version; runtime freshness remains disabled in static mode; dashboard validation catches spec drift before publish time |
 
-## 12. CI And Scheduled Workflows
+## 12. CI And Warehouse Workflows
 
 Use GitHub Actions in two distinct modes: fast parse-only CI for pull requests
-and scheduled warehouse-backed checks when you want the documented SLA to
-become an actual alarm.
+and manual warehouse-backed validation when you want to validate a configured
+warehouse environment. Keep scheduled execution disabled for the current static
+backfill unless a real source-arrival SLA is introduced.
 
 | Workflow | Purpose |
 |---|---|
 | `dbt_contracts.yml` | Parse-only CI for project structure, compile safety, and dashboard-asset validation |
-| `dbt_runtime_checks.yml` | Scheduled warehouse-backed `dbt source freshness`, snapshots, and dbt tests when secrets are configured; uploads `target_runtime` artifacts on failure for triage |
+| `dbt_runtime_checks.yml` | Manual warehouse-backed validation. Static mode skips source freshness and runs snapshots plus dbt tests; runtime mode also runs `dbt source freshness`. Uploads `target_runtime` artifacts on failure for triage |
 
 Workflow expectations:
 
 - Parse, compile, or dashboard-validation failures in `dbt_contracts.yml` are merge-blocking.
 - Diagnose `dbt_contracts.yml` failures directly in workflow logs because they
   are code or project-configuration issues, not warehouse runtime incidents.
+- Leave `dbt_runtime_checks.yml` manual for the current static dataset. Add a
+  schedule only when the warehouse has a real recurring data-arrival SLA.
